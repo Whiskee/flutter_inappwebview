@@ -77,6 +77,7 @@ public class InAppWebViewSettings: ISettings<InAppWebView> {
     var underPageBackgroundColor: String?
     var isTextInteractionEnabled = true
     var isSiteSpecificQuirksModeEnabled = true
+    var inactiveSchedulingPolicy = 2
     var upgradeKnownHostsToHTTPS = true
     var isElementFullscreenEnabled = true
     var isFindInteractionEnabled = false
@@ -191,6 +192,9 @@ public class InAppWebViewSettings: ISettings<InAppWebView> {
             if #available(iOS 16.4, *) {
                 realSettings["isInspectable"] = webView.isInspectable
                 realSettings["shouldPrintBackgrounds"] = configuration.preferences.shouldPrintBackgrounds
+            }
+            if #available(iOS 17.0, *) {
+                realSettings["inactiveSchedulingPolicy"] = configuration.preferences.inactiveSchedulingPolicy.rawValue
             }
         }
         return realSettings

@@ -590,6 +590,9 @@ public class InAppWebView: WKWebView, UIScrollViewDelegate, WKUIDelegate,
             if #available(iOS 16.4, *) {
                 configuration.preferences.shouldPrintBackgrounds = settings.shouldPrintBackgrounds
             }
+            if #available(iOS 17.0, *) {
+                configuration.preferences.inactiveSchedulingPolicy = WKPreferences.InactiveSchedulingPolicy(rawValue: settings.inactiveSchedulingPolicy) ?? .none
+            }
         }
     }
     
@@ -1261,6 +1264,12 @@ public class InAppWebView: WKWebView, UIScrollViewDelegate, WKUIDelegate,
             }
             if newSettingsMap["automaticallyAdjustsScrollIndicatorInsets"] != nil && settings?.automaticallyAdjustsScrollIndicatorInsets != newSettings.automaticallyAdjustsScrollIndicatorInsets {
                 scrollView.automaticallyAdjustsScrollIndicatorInsets = newSettings.automaticallyAdjustsScrollIndicatorInsets
+            }
+        }
+
+        if #available(iOS 17.0, *) {
+            if newSettingsMap["inactiveSchedulingPolicy"] != nil && settings?.inactiveSchedulingPolicy != newSettings.inactiveSchedulingPolicy {
+                configuration.preferences.inactiveSchedulingPolicy = WKPreferences.InactiveSchedulingPolicy(rawValue: newSettings.inactiveSchedulingPolicy) ?? .none
             }
         }
         

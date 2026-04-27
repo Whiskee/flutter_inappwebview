@@ -1006,6 +1006,12 @@ class InAppWebViewSettings {
   ///- Linux WPE WebKit ([Official API - webkit_network_session_new_ephemeral](https://wpewebkit.org/reference/stable/wpe-webkit-2.0/ctor.NetworkSession.new_ephemeral.html))
   bool? incognito;
 
+  ///Sets how a web view that's not in a window handles task scheduling. The default value is [InactiveSchedulingPolicy.NONE].
+  ///
+  ///**Officially Supported Platforms/Implementations**:
+  ///- iOS WKWebView 17.0+ ([Official API - WKPreferences.inactiveSchedulingPolicy](https://developer.apple.com/documentation/webkit/wkpreferences/inactiveschedulingpolicy-swift.enum))
+  InactiveSchedulingPolicy? inactiveSchedulingPolicy;
+
   ///Sets the initial scale for this WebView. 0 means default. The behavior for the default scale depends on the state of [useWideViewPort] and [loadWithOverviewMode].
   ///If the content fits into the WebView control by width, then the zoom is set to 100%. For wide content, the behavior depends on the state of [loadWithOverviewMode].
   ///If its value is true, the content will be zoomed out to be fit by width into the WebView control, otherwise not.
@@ -2023,6 +2029,7 @@ class InAppWebViewSettings {
     this.horizontalScrollBarEnabled = true,
     this.resourceCustomSchemes = const [],
     this.contentBlockers = const [],
+    this.inactiveSchedulingPolicy = InactiveSchedulingPolicy.NONE,
     this.preferredContentMode = UserPreferredContentMode.RECOMMENDED,
     this.useShouldInterceptAjaxRequest,
     this.useOnAjaxReadyStateChange,
@@ -2569,6 +2576,18 @@ class InAppWebViewSettings {
     instance.horizontalScrollBarEnabled = map['horizontalScrollBarEnabled'];
     instance.ignoresViewportScaleLimits = map['ignoresViewportScaleLimits'];
     instance.incognito = map['incognito'];
+    instance.inactiveSchedulingPolicy = switch (enumMethod ??
+        EnumMethod.nativeValue) {
+      EnumMethod.nativeValue => InactiveSchedulingPolicy.fromNativeValue(
+        map['inactiveSchedulingPolicy'],
+      ),
+      EnumMethod.value => InactiveSchedulingPolicy.fromValue(
+        map['inactiveSchedulingPolicy'],
+      ),
+      EnumMethod.name => InactiveSchedulingPolicy.byName(
+        map['inactiveSchedulingPolicy'],
+      ),
+    };
     instance.initialScale = map['initialScale'];
     instance.interceptOnlyAsyncAjaxRequests =
         map['interceptOnlyAsyncAjaxRequests'];
@@ -2864,6 +2883,12 @@ class InAppWebViewSettings {
           .toList(),
       "ignoresViewportScaleLimits": ignoresViewportScaleLimits,
       "incognito": incognito,
+      "inactiveSchedulingPolicy": switch (enumMethod ??
+          EnumMethod.nativeValue) {
+        EnumMethod.nativeValue => inactiveSchedulingPolicy?.toNativeValue(),
+        EnumMethod.value => inactiveSchedulingPolicy?.toValue(),
+        EnumMethod.name => inactiveSchedulingPolicy?.name(),
+      },
       "initialScale": initialScale,
       "interceptOnlyAsyncAjaxRequests": interceptOnlyAsyncAjaxRequests,
       "isDirectionalLockEnabled": isDirectionalLockEnabled,
@@ -4208,6 +4233,17 @@ enum InAppWebViewSettingsProperty {
   ///Use the [InAppWebViewSettings.isPropertySupported] method to check if this property is supported at runtime.
   ///{@endtemplate}
   incognito,
+
+  ///Can be used to check if the [InAppWebViewSettings.inactiveSchedulingPolicy] property is supported at runtime.
+  ///
+  ///{@template flutter_inappwebview_platform_interface.InAppWebViewSettings.inactiveSchedulingPolicy.supported_platforms}
+  ///
+  ///**Officially Supported Platforms/Implementations**:
+  ///- iOS WKWebView 17.0+ ([Official API - WKPreferences.inactiveSchedulingPolicy](https://developer.apple.com/documentation/webkit/wkpreferences/inactiveschedulingpolicy-swift.enum))
+  ///
+  ///Use the [InAppWebViewSettings.isPropertySupported] method to check if this property is supported at runtime.
+  ///{@endtemplate}
+  inactiveSchedulingPolicy,
 
   ///Can be used to check if the [InAppWebViewSettings.initialScale] property is supported at runtime.
   ///
@@ -5854,6 +5890,9 @@ extension _InAppWebViewSettingsPropertySupported on InAppWebViewSettings {
               TargetPlatform.windows,
               TargetPlatform.linux,
             ].contains(platform ?? defaultTargetPlatform);
+      case InAppWebViewSettingsProperty.inactiveSchedulingPolicy:
+        return ((kIsWeb && platform != null) || !kIsWeb) &&
+            [TargetPlatform.iOS].contains(platform ?? defaultTargetPlatform);
       case InAppWebViewSettingsProperty.initialScale:
         return ((kIsWeb && platform != null) || !kIsWeb) &&
             [

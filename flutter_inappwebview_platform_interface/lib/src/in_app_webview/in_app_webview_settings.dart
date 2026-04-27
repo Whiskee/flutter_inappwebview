@@ -10,6 +10,7 @@ import '../types/font_hinting_style.dart';
 import '../types/font_subpixel_layout.dart';
 import '../types/force_dark.dart';
 import '../types/force_dark_strategy.dart';
+import '../types/inactive_scheduling_policy.dart';
 import '../types/layout_algorithm.dart';
 import '../types/mixed_content_mode.dart';
 import '../types/over_scroll_mode.dart';
@@ -318,6 +319,19 @@ class InAppWebViewSettings_ {
   )
   @ExchangeableObjectProperty(deserializer: _deserializeContentBlockers)
   List<ContentBlocker>? contentBlockers;
+
+  ///Sets how a web view that's not in a window handles task scheduling. The default value is [InactiveSchedulingPolicy.NONE].
+  @SupportedPlatforms(
+    platforms: [
+      IOSPlatform(
+        available: "17.0",
+        apiName: "WKPreferences.inactiveSchedulingPolicy",
+        apiUrl:
+            "https://developer.apple.com/documentation/webkit/wkpreferences/inactiveschedulingpolicy-swift.enum",
+      ),
+    ],
+  )
+  InactiveSchedulingPolicy_? inactiveSchedulingPolicy;
 
   ///Sets the content mode that the WebView needs to use when loading and rendering a webpage. The default value is [UserPreferredContentMode.RECOMMENDED].
   @SupportedPlatforms(
@@ -3293,6 +3307,7 @@ as it can cause framerate drops on animations in Android 9 and lower (see [Hybri
     this.horizontalScrollBarEnabled = true,
     this.resourceCustomSchemes = const [],
     this.contentBlockers = const [],
+    this.inactiveSchedulingPolicy = InactiveSchedulingPolicy_.NONE,
     this.preferredContentMode = UserPreferredContentMode_.RECOMMENDED,
     this.useShouldInterceptAjaxRequest,
     this.useOnAjaxReadyStateChange,
