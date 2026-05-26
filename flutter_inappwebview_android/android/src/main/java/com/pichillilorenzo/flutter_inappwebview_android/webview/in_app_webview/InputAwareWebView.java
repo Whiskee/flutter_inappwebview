@@ -30,6 +30,31 @@ public class InputAwareWebView extends WebView {
   private ThreadedInputConnectionProxyAdapterView proxyAdapterView;
   private boolean useHybridComposition = false;
 
+  /**
+   * When true, this WebView reports {@link View#VISIBLE} to its Chromium-backed
+   * superclass whenever the surrounding window visibility changes — including
+   * when the host Activity goes to background and Android dispatches
+   * {@code View.GONE} / {@code View.INVISIBLE} via
+   * {@link #onWindowVisibilityChanged(int)}.
+   *
+   * <p>Why this matters: Chromium's renderer tracks page visibility through the
+   * View hierarchy's window visibility. Once it sees the page as hidden it
+   * aggressively throttles {@code requestAnimationFrame} (to 0 fps) and
+   * {@code setInterval}/{@code setTimeout} (clamped to 1 Hz). For our headless
+   * background runtime that hosts H5 plugins (Mark, Weather, etc.) this causes
+   * the render loop to stall and bridge calls such as {@code updateImageRawData}
+   * to stop firing.
+   *
+   * <p>Setting this flag in {@code HeadlessInAppWebView.prepare(...)} on the
+   * underlying WebView keeps the page perpetually "visible" from Chromium's
+   * perspective, so rAF / timers keep running even while the host Activity is
+   * in {@code paused} / {@code stopped} state.
+   *
+   * <p>Pair this with a 1×1 layout and {@code alpha=0} on the View so that
+   * there's no visible artefact and the per-frame raster cost stays trivial.
+   */
+  private boolean keepAlwaysVisibleForChromium = false;
+
   public InputAwareWebView(Context context, @Nullable View containerView, Boolean useHybridComposition) {
     super(context);
     this.containerView = containerView;
@@ -269,5 +294,120 @@ public class InputAwareWebView extends WebView {
       }
     }
     return false;
+  }
+
+  // ===================================================================
+  // Headless "always visible to Chromium" hack — see field doc above.
+  // ===================================================================
+
+  /**
+   * Enables/disables the headless visibility hack. When enabled, this WebView
+   * will tell its Chromium-backed superclass that the window is
+   * {@link View#VISIBLE} regardless of the actual window visibility.
+   *
+   * <p>Default is {@code false} so foreground/visible InAppWebView instances
+   * keep the standard Android visibility behavior (so they correctly pause
+   * rendering when actually off-screen / in background).
+   */
+  public void setKeepAlwaysVisibleForChromium(boolean keep) {
+    this.keepAlwaysVisibleForChromium = keep;
+    Log.i("EvenHubFix", "setKeepAlwaysVisibleForChromium=" + keep
+        + " realWinVisibility=" + super.getWindowVisibility()
+        + " realViewVisibility=" + super.getVisibility());
+    if (keep) {
+      // Proactively tell Chromium "I'm visible right now" once, in case the
+      // headless WebView was attached while the window was already non-visible.
+      super.onWindowVisibilityChanged(View.VISIBLE);
+    }
+  }
+
+  /** @return whether the headless visibility hack is currently active. */
+  public boolean isKeepAlwaysVisibleForChromium() {
+    return keepAlwaysVisibleForChromium;
+  }
+
+  /**
+   * Intercept window visibility changes. When {@link #keepAlwaysVisibleForChromium}
+   * is true, we always forward {@link View#VISIBLE} to the Chromium-backed
+   * superclass so Chromium's renderer keeps the page in the "visible" state
+   * — which is what gates {@code requestAnimationFrame} and timer throttling.
+   *
+   * <p>This is the core of the headless-background fix: even when the host
+   * Activity moves to background and Android propagates
+   * {@code View.GONE / INVISIBLE} down through the view hierarchy, Chromium
+   * sees an unbroken stream of {@code VISIBLE} signals for this WebView and
+   * never enters the throttled state.
+   */
+  @Override
+  protected void onWindowVisibilityChanged(int visibility) {
+    if (keepAlwaysVisibleForChromium) {
+      Log.i("EvenHubFix", "onWindowVisibilityChanged intercepted: real="
+          + visibility + " -> forwarded VISIBLE");
+      super.onWindowVisibilityChanged(View.VISIBLE);
+      return;
+    }
+    super.onWindowVisibilityChanged(visibility);
+  }
+
+  /**
+   * Secondary visibility hook. The View hierarchy can also propagate per-view
+   * visibility changes that some Chromium versions inspect; mirror the same
+   * override so the fix is robust across Android / WebView versions.
+   */
+  @Override
+  protected void onVisibilityChanged(@Nullable View changedView, int visibility) {
+    if (keepAlwaysVisibleForChromium) {
+      super.onVisibilityChanged(changedView, View.VISIBLE);
+      return;
+    }
+    super.onVisibilityChanged(changedView, visibility);
+  }
+
+  // ===================================================================
+  // Aggressive getters — Chromium may query these directly instead of
+  // relying on callbacks; intercepting both ends gives "fortress mode".
+  // ===================================================================
+
+  /**
+   * Returns {@link View#VISIBLE} when the headless visibility hack is active.
+   * Chromium's renderer scheduler may query this directly via the View
+   * hierarchy (not just react to {@link #onWindowVisibilityChanged} callbacks).
+   * Intercepting the getter ensures all code paths see "visible".
+   */
+  @Override
+  public int getWindowVisibility() {
+    if (keepAlwaysVisibleForChromium) {
+      return View.VISIBLE;
+    }
+    return super.getWindowVisibility();
+  }
+
+  /**
+   * View-level visibility getter. With {@code setVisibility(VISIBLE)} set in
+   * HeadlessInAppWebView.prepare(), this normally returns VISIBLE already,
+   * but override anyway for symmetry with {@link #getWindowVisibility()}.
+   */
+  @Override
+  public int getVisibility() {
+    if (keepAlwaysVisibleForChromium) {
+      return View.VISIBLE;
+    }
+    return super.getVisibility();
+  }
+
+  /**
+   * {@code isShown()} is the conjunction of this view's visibility and all its
+   * ancestors' visibilities, **AND** whether the window is in a state that
+   * could show it. When the host Activity backgrounds, the window enters a
+   * non-visible state and {@code isShown()} returns false even if the view's
+   * own visibility is VISIBLE. Chromium's compositor scheduler reads this
+   * directly to gate frame production — so spoofing it is essential.
+   */
+  @Override
+  public boolean isShown() {
+    if (keepAlwaysVisibleForChromium) {
+      return true;
+    }
+    return super.isShown();
   }
 }

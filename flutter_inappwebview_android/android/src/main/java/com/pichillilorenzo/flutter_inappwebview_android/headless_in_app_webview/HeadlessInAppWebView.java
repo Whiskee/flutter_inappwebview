@@ -13,6 +13,7 @@ import com.pichillilorenzo.flutter_inappwebview_android.Util;
 import com.pichillilorenzo.flutter_inappwebview_android.types.Disposable;
 import com.pichillilorenzo.flutter_inappwebview_android.types.Size2D;
 import com.pichillilorenzo.flutter_inappwebview_android.webview.in_app_webview.FlutterWebView;
+import com.pichillilorenzo.flutter_inappwebview_android.webview.in_app_webview.InputAwareWebView;
 
 import java.util.Map;
 
@@ -52,10 +53,28 @@ public class HeadlessInAppWebView implements Disposable {
         final Map<String, Object> initialSize = (Map<String, Object>) params.get("initialSize");
         Size2D size = Size2D.fromMap(initialSize);
         if (size == null) {
-          size = new Size2D(-1, -1);
+          // CHANGED FROM UPSTREAM: default to 1×1 instead of fullscreen (-1, -1).
+          //
+          // We now keep the headless WebView in {@link View#VISIBLE} state so
+          // Chromium considers the page "visible" and keeps rAF / timers running
+          // in background (see {@code keepAlwaysVisibleForChromium} below).
+          // A fullscreen visible WebView at alpha=0 would still trigger a
+          // full-screen GPU raster every frame; 1×1 minimizes that cost.
+          // Callers that need a larger headless surface (e.g. for screenshots)
+          // can still pass an explicit initialSize.
+          size = new Size2D(1, 1);
         }
         setSize(size);
-        view.setVisibility(View.INVISIBLE);
+        // CHANGED FROM UPSTREAM: VISIBLE + alpha(0) instead of INVISIBLE.
+        //
+        // {@code View.INVISIBLE} makes Android's window-visibility dispatch
+        // propagate "hidden" to the WebView, which Chromium uses to throttle
+        // rAF to 0 fps and timers to 1 Hz. By keeping the View VISIBLE (and
+        // pairing with the {@code keepAlwaysVisibleForChromium} hook below)
+        // Chromium sees the page as visible regardless of host Activity
+        // lifecycle. alpha=0 keeps the WebView visually invisible.
+        view.setVisibility(View.VISIBLE);
+        view.setAlpha(0f);
       }
     }
     if (plugin != null && plugin.activity != null) {
@@ -68,8 +87,24 @@ public class HeadlessInAppWebView implements Disposable {
           View view = flutterWebView.getView();
           if (view != null) {
             mainView.addView(view, 0);
+            // CHANGED FROM UPSTREAM: enable the always-visible-to-Chromium hack
+            // on the just-attached WebView. This MUST happen after addView()
+            // because setKeepAlwaysVisibleForChromium also calls
+            // super.onWindowVisibilityChanged(VISIBLE) once, and that has no
+            // effect until the View is attached to a window.
+            //
+            // IMPORTANT: flutterWebView.getView() returns the
+            // pullToRefreshLayout wrapper when one exists — NOT the
+            // InAppWebView itself. Use flutterWebView.webView directly so the
+            // {@code instanceof InputAwareWebView} check actually succeeds.
+            // (Earlier revisions used `view` here and silently no-op'd because
+            // the PullToRefreshLayout wrapper is not an InputAwareWebView.)
+            if (flutterWebView.webView instanceof InputAwareWebView) {
+              ((InputAwareWebView) flutterWebView.webView)
+                  .setKeepAlwaysVisibleForChromium(true);
+            }
           }
-        } 
+        }
       }
     }
   }
@@ -113,6 +148,23 @@ public class HeadlessInAppWebView implements Disposable {
         // restore WebView layout params and visibility
         view.setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         view.setVisibility(View.VISIBLE);
+        // CHANGED FROM UPSTREAM: also restore alpha=1 (we set it to 0 in
+        // prepare() to keep the headless view visually hidden) and disable the
+        // always-visible Chromium hack. The takeover transfers this WebView
+        // to the foreground InAppWebView widget where standard visibility
+        // behavior is expected:
+        // - alpha=1 so the user actually sees the rendered page;
+        // - keepAlwaysVisibleForChromium=false so Chromium can react to real
+        //   off-screen / background state again (pause rendering when the
+        //   plugin window is actually hidden by user navigation).
+        view.setAlpha(1f);
+        // Same wrapper-pitfall as in prepare(): operate on flutterWebView.webView
+        // (the InAppWebView itself) instead of the pullToRefreshLayout wrapper
+        // returned by getView().
+        if (flutterWebView.webView instanceof InputAwareWebView) {
+          ((InputAwareWebView) flutterWebView.webView)
+              .setKeepAlwaysVisibleForChromium(false);
+        }
         // remove from parent
         ViewGroup parent = (ViewGroup) view.getParent();
         if (parent != null) {
