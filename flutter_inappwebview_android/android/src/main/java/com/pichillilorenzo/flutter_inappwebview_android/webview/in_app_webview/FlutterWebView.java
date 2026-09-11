@@ -15,6 +15,7 @@ import androidx.annotation.Nullable;
 import androidx.webkit.WebViewFeature;
 
 import com.pichillilorenzo.flutter_inappwebview_android.InAppWebViewFlutterPlugin;
+import com.pichillilorenzo.flutter_inappwebview_android.WebViewStartupCoordinator;
 import com.pichillilorenzo.flutter_inappwebview_android.find_interaction.FindInteractionController;
 import com.pichillilorenzo.flutter_inappwebview_android.pull_to_refresh.PullToRefreshLayout;
 import com.pichillilorenzo.flutter_inappwebview_android.pull_to_refresh.PullToRefreshSettings;
@@ -124,22 +125,18 @@ public class FlutterWebView implements PlatformWebView {
         }
       }
     } else {
-      // Defer the initial load to the next UI-thread message so the bridge
-      // native registrations posted from InAppWebView.prepare()
-      // (addJavascriptInterface and addDocumentStartJavaScript) run before the
-      // renderer receives the load IPC. Without this, the load IPC fires
-      // synchronously here, races ahead of the deferred bridge registrations,
-      // and pages cached or served fast enough can execute @document-start
-      // scripts before window.flutter_inappwebview is defined.
-      webView.post(new Runnable() {
+      // The first navigation must also wait for asynchronous registration retries.
+      // This barrier does not require a Headless WebView to be attached to a window.
+      final InAppWebView expectedWebView = webView;
+      expectedWebView.runWhenInitialJavaScriptBridgeReady(new WebViewStartupCoordinator.Callback() {
         @Override
-        public void run() {
-          if (webView == null) {
+        public void onSuccess() {
+          if (webView != expectedWebView) {
             return;
           }
           if (initialFile != null) {
             try {
-              webView.loadFile(initialFile);
+              expectedWebView.loadFile(initialFile);
             } catch (IOException e) {
               Log.e(LOG_TAG, initialFile + " asset file cannot be found!", e);
             }
@@ -150,14 +147,19 @@ public class FlutterWebView implements PlatformWebView {
             String encoding = initialData.get("encoding");
             String baseUrl = initialData.get("baseUrl");
             String historyUrl = initialData.get("historyUrl");
-            webView.loadDataWithBaseURL(baseUrl, data, mimeType, encoding, historyUrl);
+            expectedWebView.loadDataWithBaseURL(baseUrl, data, mimeType, encoding, historyUrl);
           }
           else if (initialUrlRequest != null) {
             URLRequest urlRequest = URLRequest.fromMap(initialUrlRequest);
             if (urlRequest != null) {
-              webView.loadUrl(urlRequest);
+              expectedWebView.loadUrl(urlRequest);
             }
           }
+        }
+
+        @Override
+        public void onError(@NonNull Throwable error) {
+          Log.e(LOG_TAG, "Initial load cancelled: JavaScript bridge registration failed", error);
         }
       });
     }

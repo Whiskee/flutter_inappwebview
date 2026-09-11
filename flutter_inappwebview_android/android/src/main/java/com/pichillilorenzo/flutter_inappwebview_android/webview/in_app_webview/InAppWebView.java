@@ -69,6 +69,7 @@ import androidx.webkit.WebViewFeature;
 import com.pichillilorenzo.flutter_inappwebview_android.InAppWebViewFlutterPlugin;
 import com.pichillilorenzo.flutter_inappwebview_android.R;
 import com.pichillilorenzo.flutter_inappwebview_android.Util;
+import com.pichillilorenzo.flutter_inappwebview_android.WebViewStartupCoordinator;
 import com.pichillilorenzo.flutter_inappwebview_android.content_blocker.ContentBlocker;
 import com.pichillilorenzo.flutter_inappwebview_android.content_blocker.ContentBlockerAction;
 import com.pichillilorenzo.flutter_inappwebview_android.content_blocker.ContentBlockerHandler;
@@ -280,10 +281,10 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
       // across kill-relaunch cycles. Debug builds were not affected.
       // See UserContentController.addPluginScript for the equivalent defer applied
       // to addDocumentStartJavaScript.
-      post(new Runnable() {
+      WebViewStartupCoordinator.postOnMain(new Runnable() {
         @Override
         public void run() {
-          if (javaScriptBridgeInterface != null) {
+          if (!userContentController.isDisposed() && javaScriptBridgeInterface != null) {
             addJavascriptInterface(javaScriptBridgeInterface, JavaScriptBridgeJS.get_JAVASCRIPT_BRIDGE_NAME());
           }
         }
@@ -605,6 +606,31 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
         if (channelDelegate != null) channelDelegate.onLongPressHitTestResult(hitTestResult);
         return false;
       }
+    });
+  }
+
+  /** Completes after prepare()'s queued bridge registration and all script retries.
+   * A process-level Handler also runs for Headless WebViews without an Activity.
+   * Do not use mainLooperHandler: dispose() clears that queue, which would strand
+   * readiness callers instead of returning the disposed error. */
+  public void runWhenInitialJavaScriptBridgeReady(@NonNull WebViewStartupCoordinator.Callback callback) {
+    WebViewStartupCoordinator.postOnMain(() -> {
+      if (userContentController.isDisposed()) {
+        callback.onError(new IllegalStateException("WebView was disposed before bridge registration"));
+        return;
+      }
+      userContentController.runWhenScriptRegistrationsComplete(() -> {
+        if (userContentController.isDisposed()) {
+          callback.onError(new IllegalStateException("WebView was disposed before bridge registration"));
+          return;
+        }
+        Throwable error = userContentController.getScriptRegistrationError();
+        if (error != null) {
+          callback.onError(error);
+        } else {
+          callback.onSuccess();
+        }
+      });
     });
   }
 

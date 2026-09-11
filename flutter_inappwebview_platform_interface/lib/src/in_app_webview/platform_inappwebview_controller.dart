@@ -494,6 +494,7 @@ abstract class PlatformInAppWebViewController extends PlatformInterface
   ///{@template flutter_inappwebview_platform_interface.PlatformInAppWebViewController.waitForInitialJavaScriptBridgeReady}
   ///Waits until the native JavaScript interface and initial document-start
   ///scripts queued during Android WebView creation have finished registering.
+  ///The WebView does not need to be attached to a window.
   ///
   ///Register Dart handlers first, await this method, and only then load the
   ///first URL when a page calls a JavaScript handler at document start.
@@ -501,9 +502,9 @@ abstract class PlatformInAppWebViewController extends PlatformInterface
   @SupportedPlatforms(
     platforms: [
       AndroidPlatform(
-        apiName: 'View.post',
+        apiName: 'Handler.post',
         apiUrl:
-            'https://developer.android.com/reference/android/view/View#post(java.lang.Runnable)',
+            'https://developer.android.com/reference/android/os/Handler#post(java.lang.Runnable)',
       ),
     ],
   )

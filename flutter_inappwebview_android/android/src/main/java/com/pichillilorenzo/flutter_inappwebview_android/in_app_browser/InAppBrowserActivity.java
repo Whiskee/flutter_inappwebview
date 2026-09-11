@@ -32,6 +32,7 @@ import androidx.core.view.WindowInsetsCompat;
 
 import com.pichillilorenzo.flutter_inappwebview_android.R;
 import com.pichillilorenzo.flutter_inappwebview_android.Util;
+import com.pichillilorenzo.flutter_inappwebview_android.WebViewStartupCoordinator;
 import com.pichillilorenzo.flutter_inappwebview_android.find_interaction.FindInteractionController;
 import com.pichillilorenzo.flutter_inappwebview_android.pull_to_refresh.PullToRefreshChannelDelegate;
 import com.pichillilorenzo.flutter_inappwebview_android.pull_to_refresh.PullToRefreshLayout;
@@ -173,11 +174,11 @@ public class InAppBrowserActivity extends AppCompatActivity implements InAppBrow
         userScripts.add(UserScript.fromMap(initialUserScript));
       }
     }
-    webView.userContentController.addUserOnlyScripts(userScripts);
-
     actionBar = getSupportActionBar();
 
     prepareView();
+    // prepare() queues the built-in Bridge first; initial user scripts may use it.
+    webView.userContentController.addUserOnlyScripts(userScripts);
 
     if (windowId != -1) {
       if (webView.plugin != null && webView.plugin.inAppWebViewManager != null) {
@@ -188,28 +189,41 @@ public class InAppBrowserActivity extends AppCompatActivity implements InAppBrow
         }
       }
     } else {
-      String initialFile = b.getString("initialFile");
-      Map<String, Object> initialUrlRequest = (Map<String, Object>) b.getSerializable("initialUrlRequest");
-      String initialData = b.getString("initialData");
-      if (initialFile != null) {
-        try {
-          webView.loadFile(initialFile);
-        } catch (IOException e) {
-          Log.e(LOG_TAG, initialFile + " asset file cannot be found!", e);
-          return;
+      final InAppWebView expectedWebView = webView;
+      expectedWebView.runWhenInitialJavaScriptBridgeReady(new WebViewStartupCoordinator.Callback() {
+        @Override
+        public void onSuccess() {
+          if (webView != expectedWebView || isFinishing() || isDestroyed()) {
+            return;
+          }
+          String initialFile = b.getString("initialFile");
+          Map<String, Object> initialUrlRequest = (Map<String, Object>) b.getSerializable("initialUrlRequest");
+          String initialData = b.getString("initialData");
+          if (initialFile != null) {
+            try {
+              expectedWebView.loadFile(initialFile);
+            } catch (IOException e) {
+              Log.e(LOG_TAG, initialFile + " asset file cannot be found!", e);
+            }
+          } else if (initialData != null) {
+            String mimeType = b.getString("initialMimeType");
+            String encoding = b.getString("initialEncoding");
+            String baseUrl = b.getString("initialBaseUrl");
+            String historyUrl = b.getString("initialHistoryUrl");
+            expectedWebView.loadDataWithBaseURL(baseUrl, initialData, mimeType, encoding, historyUrl);
+          } else if (initialUrlRequest != null) {
+            URLRequest urlRequest = URLRequest.fromMap(initialUrlRequest);
+            if (urlRequest != null) {
+              expectedWebView.loadUrl(urlRequest);
+            }
+          }
         }
-      } else if (initialData != null) {
-        String mimeType = b.getString("initialMimeType");
-        String encoding = b.getString("initialEncoding");
-        String baseUrl = b.getString("initialBaseUrl");
-        String historyUrl = b.getString("initialHistoryUrl");
-        webView.loadDataWithBaseURL(baseUrl, initialData, mimeType, encoding, historyUrl);
-      } else if (initialUrlRequest != null) {
-        URLRequest urlRequest = URLRequest.fromMap(initialUrlRequest);
-        if (urlRequest != null) {
-          webView.loadUrl(urlRequest);
+
+        @Override
+        public void onError(@NonNull Throwable error) {
+          Log.e(LOG_TAG, "Initial load cancelled: JavaScript bridge registration failed", error);
         }
-      }
+      });
     }
 
     if (channelDelegate != null) {

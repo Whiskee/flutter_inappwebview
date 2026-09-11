@@ -42,6 +42,12 @@ public final class WebViewStartupCoordinator {
 
   private WebViewStartupCoordinator() {}
 
+  /** Always enqueue, even on the UI thread, without waiting for View attachment.
+   * Callers must check their owner is still alive when the task runs. */
+  public static void postOnMain(@NonNull Runnable runnable) {
+    MAIN_HANDLER.post(runnable);
+  }
+
   public static void ensureStarted(
           @NonNull Context context,
           @NonNull Callback callback

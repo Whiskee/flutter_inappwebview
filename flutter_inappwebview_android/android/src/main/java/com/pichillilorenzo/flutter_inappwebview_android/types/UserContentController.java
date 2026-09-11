@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -37,8 +38,25 @@ public class UserContentController implements Disposable {
   }};
 
   private final Map<UserScript, ScriptHandler> scriptHandlerMap = new HashMap<>();
-  private final Map<UserScript, Object> pendingUserOnlyScriptRegistrations = new HashMap<>();
-  private final Map<PluginScript, Object> pendingPluginScriptRegistrations = new HashMap<>();
+  // A single FIFO preserves document-start execution order, including retries.
+  private final Map<UserScript, ScriptRegistration> pendingScriptRegistrations = new LinkedHashMap<>();
+  private boolean scriptRegistrationTaskPosted = false;
+
+  private static final class ScriptRegistration {
+    final WebView expectedWebView;
+    final UserScript script;
+    final String source;
+    final boolean pluginScript;
+    boolean waitingForStartup;
+    boolean retried;
+
+    ScriptRegistration(WebView expectedWebView, UserScript script, String source, boolean pluginScript) {
+      this.expectedWebView = expectedWebView;
+      this.script = script;
+      this.source = source;
+      this.pluginScript = pluginScript;
+    }
+  }
   private final Map<UserScript, Throwable> userOnlyScriptRegistrationErrors = new HashMap<>();
   private final Map<PluginScript, Throwable> pluginScriptRegistrationErrors = new HashMap<>();
   private final List<Runnable> scriptRegistrationsCompleteCallbacks = new ArrayList<>();
@@ -208,96 +226,117 @@ public class UserContentController implements Disposable {
   public boolean addUserOnlyScript(UserScript userOnlyScript) {
     final LinkedHashSet<UserScript> scripts =
             this.userOnlyScripts.get(userOnlyScript.getInjectionTime());
-    if (scripts.contains(userOnlyScript)) {
+    if (disposed || !scripts.add(userOnlyScript)) {
       return false;
     }
     ContentWorld contentWorld = userOnlyScript.getContentWorld();
     if (contentWorld != null) {
       contentWorlds.add(contentWorld);
     }
-    this.updateContentWorldsCreatorScript();
-    if (webView != null && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-      String source = userOnlyScript.getSource();
-      if (userOnlyScript.getInjectionTime() == UserScriptInjectionTime.AT_DOCUMENT_END) {
-        source = "if (document.readyState === 'complete') { " + source + "} else { window.addEventListener('load', function() { " + source + " }); }";
-      }
-      source = wrapSourceCodeAddChecks(source, userOnlyScript);
-
-      try {
-        ScriptHandler scriptHandler = WebViewCompat.addDocumentStartJavaScript(
-                webView,
-                wrapSourceCodeInContentWorld(userOnlyScript.getContentWorld(), source),
-                userOnlyScript.getAllowedOriginRules()
-        );
-        this.scriptHandlerMap.put(userOnlyScript, scriptHandler);
-        this.userOnlyScriptRegistrationErrors.remove(userOnlyScript);
-      } catch (RuntimeException e) {
-        retryUserOnlyScriptAfterStartup(userOnlyScript, source, e);
-      }
-    }
-    return scripts.add(userOnlyScript);
+    enqueueScriptRegistration(userOnlyScript, false);
+    return true;
   }
 
-  private void retryUserOnlyScriptAfterStartup(
-          final UserScript userOnlyScript,
-          final String source,
-          @NonNull RuntimeException originalError
-  ) {
-    final WebView expectedWebView = webView;
-    if (!isWebViewStartupInProgressError(originalError) || expectedWebView == null) {
-      userOnlyScriptRegistrationErrors.put(userOnlyScript, originalError);
-      notifyScriptRegistrationsCompleteIfReady();
-      Log.e(LOG_TAG, "addDocumentStartJavaScript failed for "
-              + userOnlyScript.getGroupName(), originalError);
+  private void enqueueScriptRegistration(UserScript script, boolean pluginScript) {
+    if (webView == null || !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
       return;
     }
-    final Object token = new Object();
-    pendingUserOnlyScriptRegistrations.put(userOnlyScript, token);
-    WebViewStartupCoordinator.ensureStarted(
-            expectedWebView.getContext(),
-            new WebViewStartupCoordinator.Callback() {
-              @Override
-              public void onSuccess() {
-                expectedWebView.post(() -> {
-                  if (webView != expectedWebView
-                          || pendingUserOnlyScriptRegistrations.get(userOnlyScript) != token
-                          || !userOnlyScripts.get(userOnlyScript.getInjectionTime()).contains(userOnlyScript)) {
-                    return;
-                  }
-                  try {
-                    ScriptHandler scriptHandler = WebViewCompat.addDocumentStartJavaScript(
-                            expectedWebView,
-                            wrapSourceCodeInContentWorld(userOnlyScript.getContentWorld(), source),
-                            userOnlyScript.getAllowedOriginRules()
-                    );
-                    scriptHandlerMap.put(userOnlyScript, scriptHandler);
-                    userOnlyScriptRegistrationErrors.remove(userOnlyScript);
-                  } catch (RuntimeException retryError) {
-                    userOnlyScriptRegistrationErrors.put(userOnlyScript, retryError);
-                    Log.e(LOG_TAG, "retry addDocumentStartJavaScript failed for "
-                            + userOnlyScript.getGroupName(), retryError);
-                  } finally {
-                    if (pendingUserOnlyScriptRegistrations.get(userOnlyScript) == token) {
-                      pendingUserOnlyScriptRegistrations.remove(userOnlyScript);
+    String source = script.getSource();
+    if (script.getInjectionTime() == UserScriptInjectionTime.AT_DOCUMENT_END) {
+      source = "if (document.readyState === 'complete') { " + source + "} else { window.addEventListener('load', function() { " + source + " }); }";
+    }
+    source = wrapSourceCodeInContentWorld(script.getContentWorld(), wrapSourceCodeAddChecks(source, script));
+    pendingScriptRegistrations.put(script, new ScriptRegistration(webView, script, source, pluginScript));
+    scheduleNextScriptRegistration();
+  }
+
+  private void scheduleNextScriptRegistration() {
+    if (disposed || scriptRegistrationTaskPosted || pendingScriptRegistrations.isEmpty()) {
+      return;
+    }
+    scriptRegistrationTaskPosted = true;
+    // Always defer binder IPC out of platform-view construction. A Handler also
+    // runs for unattached Headless WebViews; View.post does not.
+    WebViewStartupCoordinator.postOnMain(() -> {
+      scriptRegistrationTaskPosted = false;
+      registerNextScript();
+    });
+  }
+
+  private boolean isCurrentRegistration(ScriptRegistration registration) {
+    return !disposed && webView == registration.expectedWebView
+            && pendingScriptRegistrations.get(registration.script) == registration;
+  }
+
+  private void registerNextScript() {
+    if (disposed || pendingScriptRegistrations.isEmpty()) {
+      return;
+    }
+    final ScriptRegistration registration = pendingScriptRegistrations.values().iterator().next();
+    if (registration.waitingForStartup) {
+      // Keep the retry at the head. Posting all scripts independently lets later
+      // scripts overtake it and changes their document-start execution order.
+      return;
+    }
+    if (!isCurrentRegistration(registration)) {
+      pendingScriptRegistrations.remove(registration.script);
+      notifyScriptRegistrationsCompleteIfReady();
+      return;
+    }
+    try {
+      // Content-world setup belongs to the same operation and retry barrier.
+      updateContentWorldsCreatorScript();
+      ScriptHandler handler = WebViewCompat.addDocumentStartJavaScript(
+              registration.expectedWebView, registration.source, registration.script.getAllowedOriginRules());
+      scriptHandlerMap.put(registration.script, handler);
+      finishScriptRegistration(registration, null);
+    } catch (RuntimeException error) {
+      if (!registration.retried && isWebViewStartupInProgressError(error)) {
+        registration.retried = true;
+        registration.waitingForStartup = true;
+        WebViewStartupCoordinator.ensureStarted(registration.expectedWebView.getContext(),
+                new WebViewStartupCoordinator.Callback() {
+                  @Override
+                  public void onSuccess() {
+                    if (!isCurrentRegistration(registration)) {
+                      return;
                     }
-                    notifyScriptRegistrationsCompleteIfReady();
+                    registration.waitingForStartup = false;
+                    scheduleNextScriptRegistration();
+                  }
+
+                  @Override
+                  public void onError(@NonNull Throwable startupError) {
+                    finishScriptRegistration(registration, startupError);
                   }
                 });
-              }
+      } else {
+        finishScriptRegistration(registration, error);
+      }
+    }
+  }
 
-              @Override
-              public void onError(@NonNull Throwable error) {
-                if (pendingUserOnlyScriptRegistrations.get(userOnlyScript) != token) {
-                  return;
-                }
-                pendingUserOnlyScriptRegistrations.remove(userOnlyScript);
-                userOnlyScriptRegistrationErrors.put(userOnlyScript, error);
-                notifyScriptRegistrationsCompleteIfReady();
-                Log.e(LOG_TAG, "WebView startup failed before retrying user script "
-                        + userOnlyScript.getGroupName(), error);
-              }
-            }
-    );
+  private void finishScriptRegistration(ScriptRegistration registration, @Nullable Throwable error) {
+    if (!isCurrentRegistration(registration)) {
+      return;
+    }
+    pendingScriptRegistrations.remove(registration.script);
+    if (registration.pluginScript) {
+      PluginScript script = (PluginScript) registration.script;
+      if (error == null) {
+        pluginScriptRegistrationErrors.remove(script);
+      } else {
+        pluginScriptRegistrationErrors.put(script, error);
+      }
+    } else if (error == null) {
+      userOnlyScriptRegistrationErrors.remove(registration.script);
+    } else {
+      userOnlyScriptRegistrationErrors.put(registration.script, error);
+    }
+    if (error != null) {
+      Log.e(LOG_TAG, "addDocumentStartJavaScript failed for " + registration.script.getGroupName(), error);
+    }
+    notifyScriptRegistrationsCompleteIfReady();
   }
 
   public void addUserOnlyScripts(List<UserScript> userOnlyScripts) {
@@ -307,7 +346,7 @@ public class UserContentController implements Disposable {
   }
 
   public boolean removeUserOnlyScript(UserScript userOnlyScript) {
-    this.pendingUserOnlyScriptRegistrations.remove(userOnlyScript);
+    this.pendingScriptRegistrations.remove(userOnlyScript);
     this.userOnlyScriptRegistrationErrors.remove(userOnlyScript);
     if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
       ScriptHandler scriptHandler = this.scriptHandlerMap.get(userOnlyScript);
@@ -328,7 +367,7 @@ public class UserContentController implements Disposable {
   }
 
   public void removeAllUserOnlyScripts() {
-    this.pendingUserOnlyScriptRegistrations.clear();
+    this.pendingScriptRegistrations.entrySet().removeIf(entry -> !entry.getValue().pluginScript);
     this.userOnlyScriptRegistrationErrors.clear();
     if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
       for (UserScript userOnlyScript : this.userOnlyScripts.get(UserScriptInjectionTime.AT_DOCUMENT_START)) {
@@ -369,129 +408,15 @@ public class UserContentController implements Disposable {
   public boolean addPluginScript(final PluginScript pluginScript) {
     final LinkedHashSet<PluginScript> scripts =
             this.pluginScripts.get(pluginScript.getInjectionTime());
-    if (scripts.contains(pluginScript)) {
+    if (disposed || !scripts.add(pluginScript)) {
       return false;
     }
     ContentWorld contentWorld = pluginScript.getContentWorld();
     if (contentWorld != null) {
       contentWorlds.add(contentWorld);
     }
-    this.updateContentWorldsCreatorScript();
-    if (webView != null && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-      String source = pluginScript.getSource();
-      if (pluginScript.getInjectionTime() == UserScriptInjectionTime.AT_DOCUMENT_END) {
-        source = "if (document.readyState === 'complete') { " + source + "} else { window.addEventListener('load', function() { " + source + " }); }";
-      }
-      source = wrapSourceCodeAddChecks(source, pluginScript);
-      final String finalSource = wrapSourceCodeInContentWorld(pluginScript.getContentWorld(), source);
-      final Object registrationToken = new Object();
-      pendingPluginScriptRegistrations.put(pluginScript, registrationToken);
-
-      // Defer WebViewCompat.addDocumentStartJavaScript to the next UI-thread
-      // message. Its binder IPC to the Chromium renderer process must not run
-      // while FlutterWebView is still synchronously building the platform view.
-      // InAppWebView.prepareAndAddUserScripts() issues 5 to 9 of these
-      // registrations synchronously when the JS bridge is enabled (PromisePolyfill,
-      // JS Bridge, Print, OnWindowBlur, OnWindowFocus, plus up to four more
-      // depending on settings); running them inline was observed to leave
-      // onWebViewCreated never fired on ~50% of release-build cold starts on real
-      // Android devices, with the failure toggling deterministically across kill-
-      // relaunch cycles. Debug builds were not affected.
-      webView.post(new Runnable() {
-        @Override
-        public void run() {
-          if (webView != null
-                  && pendingPluginScriptRegistrations.get(pluginScript) == registrationToken
-                  && pluginScripts.get(pluginScript.getInjectionTime()).contains(pluginScript)) {
-            try {
-              ScriptHandler scriptHandler = WebViewCompat.addDocumentStartJavaScript(
-                      webView,
-                      finalSource,
-                      pluginScript.getAllowedOriginRules()
-              );
-              scriptHandlerMap.put(pluginScript, scriptHandler);
-              pluginScriptRegistrationErrors.remove(pluginScript);
-              if (pendingPluginScriptRegistrations.get(pluginScript) == registrationToken) {
-                pendingPluginScriptRegistrations.remove(pluginScript);
-              }
-              notifyScriptRegistrationsCompleteIfReady();
-            } catch (RuntimeException e) {
-              retryPluginScriptAfterStartup(
-                      pluginScript,
-                      finalSource,
-                      registrationToken,
-                      e
-              );
-            }
-          }
-        }
-      });
-    }
-    return scripts.add(pluginScript);
-  }
-
-  private void retryPluginScriptAfterStartup(
-          final PluginScript pluginScript,
-          final String source,
-          final Object registrationToken,
-          @NonNull RuntimeException originalError
-  ) {
-    final WebView expectedWebView = webView;
-    if (!isWebViewStartupInProgressError(originalError) || expectedWebView == null) {
-      if (pendingPluginScriptRegistrations.get(pluginScript) == registrationToken) {
-        pendingPluginScriptRegistrations.remove(pluginScript);
-      }
-      pluginScriptRegistrationErrors.put(pluginScript, originalError);
-      notifyScriptRegistrationsCompleteIfReady();
-      Log.e(LOG_TAG, "addDocumentStartJavaScript failed for plugin script "
-              + pluginScript.getGroupName(), originalError);
-      return;
-    }
-    WebViewStartupCoordinator.ensureStarted(
-            expectedWebView.getContext(),
-            new WebViewStartupCoordinator.Callback() {
-              @Override
-              public void onSuccess() {
-                expectedWebView.post(() -> {
-                  if (webView != expectedWebView
-                          || pendingPluginScriptRegistrations.get(pluginScript) != registrationToken
-                          || !pluginScripts.get(pluginScript.getInjectionTime()).contains(pluginScript)) {
-                    return;
-                  }
-                  try {
-                    ScriptHandler scriptHandler = WebViewCompat.addDocumentStartJavaScript(
-                            expectedWebView,
-                            source,
-                            pluginScript.getAllowedOriginRules()
-                    );
-                    scriptHandlerMap.put(pluginScript, scriptHandler);
-                    pluginScriptRegistrationErrors.remove(pluginScript);
-                  } catch (RuntimeException retryError) {
-                    pluginScriptRegistrationErrors.put(pluginScript, retryError);
-                    Log.e(LOG_TAG, "retry addDocumentStartJavaScript failed for plugin script "
-                            + pluginScript.getGroupName(), retryError);
-                  } finally {
-                    if (pendingPluginScriptRegistrations.get(pluginScript) == registrationToken) {
-                      pendingPluginScriptRegistrations.remove(pluginScript);
-                    }
-                    notifyScriptRegistrationsCompleteIfReady();
-                  }
-                });
-              }
-
-              @Override
-              public void onError(@NonNull Throwable error) {
-                if (pendingPluginScriptRegistrations.get(pluginScript) != registrationToken) {
-                  return;
-                }
-                pendingPluginScriptRegistrations.remove(pluginScript);
-                pluginScriptRegistrationErrors.put(pluginScript, error);
-                notifyScriptRegistrationsCompleteIfReady();
-                Log.e(LOG_TAG, "WebView startup failed before retrying plugin script "
-                        + pluginScript.getGroupName(), error);
-              }
-            }
-    );
+    enqueueScriptRegistration(pluginScript, true);
+    return true;
   }
 
   private boolean isWebViewStartupInProgressError(@NonNull Throwable error) {
@@ -515,7 +440,7 @@ public class UserContentController implements Disposable {
   public boolean removePluginScript(PluginScript pluginScript) {
     // Invalidate before removing the installed handler. A queued registration
     // for the same script must not be able to run after this method returns.
-    this.pendingPluginScriptRegistrations.remove(pluginScript);
+    this.pendingScriptRegistrations.remove(pluginScript);
     this.pluginScriptRegistrationErrors.remove(pluginScript);
     if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
       ScriptHandler scriptHandler = this.scriptHandlerMap.get(pluginScript);
@@ -531,7 +456,7 @@ public class UserContentController implements Disposable {
   }
 
   public void removeAllPluginScripts() {
-    this.pendingPluginScriptRegistrations.clear();
+    this.pendingScriptRegistrations.entrySet().removeIf(entry -> entry.getValue().pluginScript);
     this.pluginScriptRegistrationErrors.clear();
     if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
       for (PluginScript pluginScript : this.pluginScripts.get(UserScriptInjectionTime.AT_DOCUMENT_START)) {
@@ -555,8 +480,7 @@ public class UserContentController implements Disposable {
   }
 
   public void runWhenScriptRegistrationsComplete(@NonNull Runnable callback) {
-    if (pendingUserOnlyScriptRegistrations.isEmpty()
-            && pendingPluginScriptRegistrations.isEmpty()) {
+    if (pendingScriptRegistrations.isEmpty()) {
       callback.run();
       return;
     }
@@ -579,8 +503,9 @@ public class UserContentController implements Disposable {
   }
 
   private void notifyScriptRegistrationsCompleteIfReady() {
-    if (!pendingUserOnlyScriptRegistrations.isEmpty()
-            || !pendingPluginScriptRegistrations.isEmpty()) {
+    if (!pendingScriptRegistrations.isEmpty()) {
+      // Removal may have cancelled the head while it was awaiting startup.
+      scheduleNextScriptRegistration();
       return;
     }
     List<Runnable> callbacks = new ArrayList<>(scriptRegistrationsCompleteCallbacks);

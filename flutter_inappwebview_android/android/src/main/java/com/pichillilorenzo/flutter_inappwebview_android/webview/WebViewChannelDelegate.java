@@ -13,6 +13,7 @@ import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 
 import com.pichillilorenzo.flutter_inappwebview_android.Util;
+import com.pichillilorenzo.flutter_inappwebview_android.WebViewStartupCoordinator;
 import com.pichillilorenzo.flutter_inappwebview_android.find_interaction.FindInteractionChannelDelegate;
 import com.pichillilorenzo.flutter_inappwebview_android.in_app_browser.InAppBrowserActivity;
 import com.pichillilorenzo.flutter_inappwebview_android.in_app_browser.InAppBrowserSettings;
@@ -109,36 +110,19 @@ public class WebViewChannelDelegate extends ChannelDelegateImpl {
           result.error(LOG_TAG, "WebView was disposed before bridge registration", null);
           break;
         }
-        // All bridge/script registrations created during prepare() use the
-        // same UI-thread View.post queue. After that queue marker, also wait
-        // for registrations retried behind asynchronous WebView startup.
-        expectedWebView.post(new Runnable() {
+        expectedWebView.runWhenInitialJavaScriptBridgeReady(new WebViewStartupCoordinator.Callback() {
           @Override
-          public void run() {
-            if (webView != expectedWebView
-                    || expectedWebView.getUserContentController().isDisposed()) {
+          public void onSuccess() {
+            if (webView != expectedWebView) {
               result.error(LOG_TAG, "WebView was disposed before bridge registration", null);
-              return;
+            } else {
+              result.success(true);
             }
-            expectedWebView.getUserContentController()
-                    .runWhenScriptRegistrationsComplete(new Runnable() {
-                      @Override
-                      public void run() {
-                        if (webView != expectedWebView
-                                || expectedWebView.getUserContentController().isDisposed()) {
-                          result.error(LOG_TAG, "WebView was disposed before bridge registration", null);
-                          return;
-                        }
-                        Throwable registrationError = expectedWebView
-                                .getUserContentController()
-                                .getScriptRegistrationError();
-                        if (registrationError != null) {
-                          result.error(LOG_TAG, registrationError.getMessage(), null);
-                        } else {
-                          result.success(true);
-                        }
-                      }
-                    });
+          }
+
+          @Override
+          public void onError(@NonNull Throwable error) {
+            result.error(LOG_TAG, error.getMessage(), null);
           }
         });
         break;
@@ -586,7 +570,28 @@ public class WebViewChannelDelegate extends ChannelDelegateImpl {
         if (webView != null && webView.getUserContentController() != null) {
           Map<String, Object> userScriptMap = (Map<String, Object>) call.argument("userScript");
           UserScript userScript = UserScript.fromMap(userScriptMap);
-          result.success(webView.getUserContentController().addUserOnlyScript(userScript));
+          final InAppWebView scriptWebView = webView;
+          if (!scriptWebView.getUserContentController().addUserOnlyScript(userScript)) {
+            result.success(false);
+            break;
+          }
+          // Preserve await addUserScript(); loadUrl() semantics now that user
+          // scripts share the asynchronous registration queue with the Bridge.
+          scriptWebView.runWhenInitialJavaScriptBridgeReady(new WebViewStartupCoordinator.Callback() {
+            @Override
+            public void onSuccess() {
+              if (webView == scriptWebView) {
+                result.success(true);
+              } else {
+                result.error(LOG_TAG, "WebView was disposed before script registration", null);
+              }
+            }
+
+            @Override
+            public void onError(@NonNull Throwable error) {
+              result.error(LOG_TAG, error.getMessage(), null);
+            }
+          });
         } else {
           result.success(false);
         }

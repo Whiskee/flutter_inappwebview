@@ -2512,7 +2512,7 @@ enum PlatformInAppWebViewControllerMethod {
   ///{@template flutter_inappwebview_platform_interface.PlatformInAppWebViewController.waitForInitialJavaScriptBridgeReady.supported_platforms}
   ///
   ///**Officially Supported Platforms/Implementations**:
-  ///- Android WebView ([Official API - View.post](https://developer.android.com/reference/android/view/View#post(java.lang.Runnable)))
+  ///- Android WebView ([Official API - Handler.post](https://developer.android.com/reference/android/os/Handler#post(java.lang.Runnable)))
   ///
   ///Use the [PlatformInAppWebViewController.isMethodSupported] method to check if this method is supported at runtime.
   ///{@endtemplate}

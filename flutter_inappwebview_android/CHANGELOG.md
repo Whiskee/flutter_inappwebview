@@ -1,5 +1,7 @@
 ## 1.2.0-beta.3
 
+- Preserved Bridge-before-user-script registration order, including asynchronous startup retries
+- Fixed bridge readiness stalling in unattached Headless WebViews and made InAppBrowser initial navigation wait for script registration and retries
 - Added an Android WebView startup barrier and cancellable initial script registration to avoid cold-start bridge loss
 - Updated `androidx.webkit:webkit` from `1.14.0` to `1.16.0` and minimum Android SDK from 19 to 24
 - Updated flutter_inappwebview_platform_interface version to ^1.4.0-beta.3
