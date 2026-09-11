@@ -495,9 +495,14 @@ abstract class PlatformInAppWebViewController extends PlatformInterface
   ///Waits until the native JavaScript interface and initial document-start
   ///scripts queued during Android WebView creation have finished registering.
   ///The WebView does not need to be attached to a window.
+  ///For popup WebViews using document-start registration, this also waits
+  ///for transport handoff and initial script preparation; an empty,
+  ///not-yet-prepared queue is not ready.
   ///
-  ///Register Dart handlers first, await this method, and only then load the
-  ///first URL when a page calls a JavaScript handler at document start.
+  ///Android initial URL, POST, data and file loads already wait for this
+  ///initialization. Register Dart handlers before requesting the first load.
+  ///This method can also explicitly synchronize other bridge-dependent work;
+  ///it does not wait for the page to load or for page JavaScript to execute.
   ///{@endtemplate}
   @SupportedPlatforms(
     platforms: [

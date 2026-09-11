@@ -60,6 +60,10 @@ public class UserContentController implements Disposable {
   private final Map<UserScript, Throwable> userOnlyScriptRegistrationErrors = new HashMap<>();
   private final Map<PluginScript, Throwable> pluginScriptRegistrationErrors = new HashMap<>();
   private final List<Runnable> scriptRegistrationsCompleteCallbacks = new ArrayList<>();
+  // An empty queue is not ready while a popup still awaits its transport handoff.
+  private boolean initialScriptPreparationPending = true;
+  @Nullable
+  private Throwable initialScriptPreparationError;
   private boolean disposed = false;
 
   @Nullable
@@ -479,8 +483,17 @@ public class UserContentController implements Disposable {
     notifyScriptRegistrationsCompleteIfReady();
   }
 
+  public void finishInitialScriptPreparation(@Nullable Throwable error) {
+    if (disposed) {
+      return;
+    }
+    initialScriptPreparationError = error;
+    initialScriptPreparationPending = false;
+    notifyScriptRegistrationsCompleteIfReady();
+  }
+
   public void runWhenScriptRegistrationsComplete(@NonNull Runnable callback) {
-    if (pendingScriptRegistrations.isEmpty()) {
+    if (disposed || (!initialScriptPreparationPending && pendingScriptRegistrations.isEmpty())) {
       callback.run();
       return;
     }
@@ -493,6 +506,9 @@ public class UserContentController implements Disposable {
 
   @Nullable
   public Throwable getScriptRegistrationError() {
+    if (initialScriptPreparationError != null) {
+      return initialScriptPreparationError;
+    }
     if (!userOnlyScriptRegistrationErrors.isEmpty()) {
       return userOnlyScriptRegistrationErrors.values().iterator().next();
     }
@@ -503,7 +519,7 @@ public class UserContentController implements Disposable {
   }
 
   private void notifyScriptRegistrationsCompleteIfReady() {
-    if (!pendingScriptRegistrations.isEmpty()) {
+    if (!disposed && (initialScriptPreparationPending || !pendingScriptRegistrations.isEmpty())) {
       // Removal may have cancelled the head while it was awaiting startup.
       scheduleNextScriptRegistration();
       return;

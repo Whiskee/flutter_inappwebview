@@ -3,19 +3,15 @@ package com.pichillilorenzo.flutter_inappwebview_android.webview.in_app_webview;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.hardware.display.DisplayManager;
-import android.os.Message;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
-import android.webkit.WebView;
 import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.webkit.WebViewFeature;
 
 import com.pichillilorenzo.flutter_inappwebview_android.InAppWebViewFlutterPlugin;
-import com.pichillilorenzo.flutter_inappwebview_android.WebViewStartupCoordinator;
 import com.pichillilorenzo.flutter_inappwebview_android.find_interaction.FindInteractionController;
 import com.pichillilorenzo.flutter_inappwebview_android.pull_to_refresh.PullToRefreshLayout;
 import com.pichillilorenzo.flutter_inappwebview_android.pull_to_refresh.PullToRefreshSettings;
@@ -100,35 +96,12 @@ public class FlutterWebView implements PlatformWebView {
     final Map<String, String> initialData = (Map<String, String>) params.get("initialData");
 
     if (windowId != null) {
-      if (webView.plugin != null && webView.plugin.inAppWebViewManager != null) {
-        Message resultMsg = webView.plugin.inAppWebViewManager.windowWebViewMessages.get(windowId);
-        if (resultMsg != null) {
-          ((WebView.WebViewTransport) resultMsg.obj).setWebView(webView);
-          resultMsg.sendToTarget();
-          if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            // for some reason, if a WebView is created using a window id,
-            // the initial plugin and user scripts injected
-            // with WebViewCompat.addDocumentStartJavaScript will not be added!
-            // https://github.com/pichillilorenzo/flutter_inappwebview/issues/1455
-            //
-            // Also, calling the prepareAndAddUserScripts method right after won't work,
-            // so use the View.post method here.
-            webView.post(new Runnable() {
-              @Override
-              public void run() {
-                if (webView != null) {
-                  webView.prepareAndAddUserScripts();
-                }
-              }
-            });
-          }
-        }
-      }
+      webView.completeWindowCreation();
     } else {
       // The first navigation must also wait for asynchronous registration retries.
       // This barrier does not require a Headless WebView to be attached to a window.
       final InAppWebView expectedWebView = webView;
-      expectedWebView.runWhenInitialJavaScriptBridgeReady(new WebViewStartupCoordinator.Callback() {
+      expectedWebView.runWhenInitialJavaScriptBridgeReadyForNavigation(new InAppWebView.InitialNavigationCallback() {
         @Override
         public void onSuccess() {
           if (webView != expectedWebView) {

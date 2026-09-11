@@ -183,6 +183,9 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
   @NonNull
   private final String expectedBridgeSecret = UUID.randomUUID().toString();
   private boolean javaScriptBridgeEnabled = true;
+  private boolean initialJavaScriptBridgeReady = false;
+  private int pendingInitialNavigations = 0;
+  private long initialNavigationCancellationGeneration = 0;
 
   public InAppWebView(Context context) {
     super(context);
@@ -253,6 +256,11 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
     } else {
       super.setAlpha(alpha);
     }
+  }
+
+  public void prepare(@NonNull List<UserScript> initialUserScripts) {
+    this.initialUserOnlyScripts = new ArrayList<>(initialUserScripts);
+    prepare();
   }
 
   @SuppressLint("RestrictedApi")
@@ -609,7 +617,8 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
     });
   }
 
-  /** Completes after prepare()'s queued bridge registration and all script retries.
+  /** Completes after initial script preparation, bridge registration and all retries.
+   * Popup preparation may not have started yet, so an empty queue alone is not ready.
    * A process-level Handler also runs for Headless WebViews without an Activity.
    * Do not use mainLooperHandler: dispose() clears that queue, which would strand
    * readiness callers instead of returning the disposed error. */
@@ -634,7 +643,105 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
     });
   }
 
+  public interface InitialNavigationCallback extends WebViewStartupCoordinator.Callback {
+    default void onCancelled() {}
+  }
+
+  /** All creation-time navigations share the registration barrier. Once startup
+   * is complete, ordinary navigation must not wait for later dynamic scripts.
+   * Keep subsequent requests queued while an earlier one is pending so the
+   * initialized fast path cannot overtake it. */
+  public void runWhenInitialJavaScriptBridgeReadyForNavigation(
+          @NonNull InitialNavigationCallback callback) {
+    if (initialJavaScriptBridgeReady && pendingInitialNavigations == 0
+            && !userContentController.isDisposed()) {
+      callback.onSuccess();
+      return;
+    }
+    final long cancellationGeneration = initialNavigationCancellationGeneration;
+    pendingInitialNavigations++;
+    runWhenInitialJavaScriptBridgeReady(new WebViewStartupCoordinator.Callback() {
+      @Override
+      public void onSuccess() {
+        pendingInitialNavigations--;
+        initialJavaScriptBridgeReady = true;
+        if (cancellationGeneration != initialNavigationCancellationGeneration) {
+          callback.onCancelled();
+        } else {
+          callback.onSuccess();
+        }
+      }
+
+      @Override
+      public void onError(@NonNull Throwable error) {
+        pendingInitialNavigations--;
+        if (!userContentController.isDisposed()
+                && cancellationGeneration != initialNavigationCancellationGeneration) {
+          callback.onCancelled();
+        } else {
+          callback.onError(error);
+        }
+      }
+    });
+  }
+
+  @Override
+  public void stopLoading() {
+    // A navigation waiting for scripts has not reached Chromium yet.
+    // Also invalidate those requests so they cannot start after stopLoading.
+    initialNavigationCancellationGeneration++;
+    super.stopLoading();
+  }
+
+  /** Supply the popup first, then prepare scripts on the following UI message.
+   * Registering before the handoff loses popup scripts (upstream issue #1455).
+   * A Handler preserves that order without requiring the View to be attached. */
+  public void completeWindowCreation() {
+    if (userContentController.isDisposed()) {
+      return;
+    }
+    Message resultMsg = plugin != null && plugin.inAppWebViewManager != null
+            ? plugin.inAppWebViewManager.windowWebViewMessages.get(windowId) : null;
+    if (resultMsg == null) {
+      userContentController.finishInitialScriptPreparation(
+              new IllegalStateException("Popup transport is unavailable"));
+      return;
+    }
+    try {
+      ((WebView.WebViewTransport) resultMsg.obj).setWebView(this);
+      resultMsg.sendToTarget();
+      if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+        WebViewStartupCoordinator.postOnMain(this::prepareAndAddUserScripts);
+      }
+      // Popups have no configured initial URL, but still need to settle the
+      // one-time navigation gate when their initial scripts finish registering.
+      runWhenInitialJavaScriptBridgeReadyForNavigation(new InitialNavigationCallback() {
+        @Override
+        public void onSuccess() {}
+
+        @Override
+        public void onError(@NonNull Throwable error) {
+          // Readiness and explicit navigation callers receive the actual error.
+        }
+      });
+    } catch (RuntimeException error) {
+      userContentController.finishInitialScriptPreparation(error);
+    }
+  }
+
   public void prepareAndAddUserScripts() {
+    if (userContentController.isDisposed()) {
+      return;
+    }
+    try {
+      enqueueInitialUserScripts();
+      userContentController.finishInitialScriptPreparation(null);
+    } catch (RuntimeException error) {
+      userContentController.finishInitialScriptPreparation(error);
+    }
+  }
+
+  private void enqueueInitialUserScripts() {
     if (javaScriptBridgeEnabled) {
       // all the plugin scripts are using the JavaScript Bridge to work
       userContentController.addPluginScript(PromisePolyfillJS.PROMISE_POLYFILL_JS_PLUGIN_SCRIPT(customSettings.pluginScriptsOriginAllowList,

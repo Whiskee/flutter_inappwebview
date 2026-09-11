@@ -7,14 +7,12 @@ import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Message;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
-import android.webkit.WebView;
 import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
 import android.widget.SearchView;
@@ -32,7 +30,6 @@ import androidx.core.view.WindowInsetsCompat;
 
 import com.pichillilorenzo.flutter_inappwebview_android.R;
 import com.pichillilorenzo.flutter_inappwebview_android.Util;
-import com.pichillilorenzo.flutter_inappwebview_android.WebViewStartupCoordinator;
 import com.pichillilorenzo.flutter_inappwebview_android.find_interaction.FindInteractionController;
 import com.pichillilorenzo.flutter_inappwebview_android.pull_to_refresh.PullToRefreshChannelDelegate;
 import com.pichillilorenzo.flutter_inappwebview_android.pull_to_refresh.PullToRefreshLayout;
@@ -176,21 +173,15 @@ public class InAppBrowserActivity extends AppCompatActivity implements InAppBrow
     }
     actionBar = getSupportActionBar();
 
-    prepareView();
-    // prepare() queues the built-in Bridge first; initial user scripts may use it.
-    webView.userContentController.addUserOnlyScripts(userScripts);
+    // Both regular pages and popups must enqueue user scripts in the same
+    // initial batch as the Bridge, after popup transport when applicable.
+    prepareView(userScripts);
 
     if (windowId != -1) {
-      if (webView.plugin != null && webView.plugin.inAppWebViewManager != null) {
-        Message resultMsg = webView.plugin.inAppWebViewManager.windowWebViewMessages.get(windowId);
-        if (resultMsg != null) {
-          ((WebView.WebViewTransport) resultMsg.obj).setWebView(webView);
-          resultMsg.sendToTarget();
-        }
-      }
+      webView.completeWindowCreation();
     } else {
       final InAppWebView expectedWebView = webView;
-      expectedWebView.runWhenInitialJavaScriptBridgeReady(new WebViewStartupCoordinator.Callback() {
+      expectedWebView.runWhenInitialJavaScriptBridgeReadyForNavigation(new InAppWebView.InitialNavigationCallback() {
         @Override
         public void onSuccess() {
           if (webView != expectedWebView || isFinishing() || isDestroyed()) {
@@ -231,10 +222,10 @@ public class InAppBrowserActivity extends AppCompatActivity implements InAppBrow
     }
   }
 
-  private void prepareView() {
+  private void prepareView(List<UserScript> initialUserScripts) {
 
     if (webView != null) {
-      webView.prepare();
+      webView.prepare(initialUserScripts);
     }
 
     if (customSettings.hidden)

@@ -78,6 +78,51 @@ public class WebViewChannelDelegate extends ChannelDelegateImpl {
     this.webView = webView;
   }
 
+  private interface InitialNavigation {
+    void load(InAppWebView webView) throws IOException;
+  }
+
+  private void runInitialNavigation(@NonNull MethodChannel.Result result,
+                                   @NonNull InitialNavigation navigation) {
+    final InAppWebView expectedWebView = webView;
+    if (expectedWebView == null) {
+      // Preserve the existing no-op result for calls after channel disposal.
+      result.success(true);
+      return;
+    }
+    expectedWebView.runWhenInitialJavaScriptBridgeReadyForNavigation(
+            new InAppWebView.InitialNavigationCallback() {
+              @Override
+              public void onSuccess() {
+                if (webView != expectedWebView || expectedWebView.userContentController.isDisposed()) {
+                  result.error(LOG_TAG, "WebView was disposed before initial navigation", null);
+                  return;
+                }
+                try {
+                  navigation.load(expectedWebView);
+                } catch (IOException | RuntimeException error) {
+                  // Deferred work no longer runs inside MethodChannel's
+                  // synchronous exception handler, so always finish the result.
+                  result.error(LOG_TAG, error.getMessage(), null);
+                  return;
+                }
+                result.success(true);
+              }
+
+              @Override
+              public void onCancelled() {
+                // loadUrl/Post/Data/File futures acknowledge issuing a request,
+                // not page completion. A stopped queued request is a no-op.
+                result.success(true);
+              }
+
+              @Override
+              public void onError(@NonNull Throwable error) {
+                result.error(LOG_TAG, error.getMessage(), null);
+              }
+            });
+  }
+
   @Override
   public void onMethodCall(@NonNull MethodCall call, @NonNull final MethodChannel.Result result) {
     WebViewChannelDelegateMethods method = null;
@@ -98,11 +143,10 @@ public class WebViewChannelDelegate extends ChannelDelegateImpl {
         result.success((webView != null) ? webView.getProgress() : null);
         break;
       case loadUrl:
-        if (webView != null) {
+        runInitialNavigation(result, targetWebView -> {
           Map<String, Object> urlRequest = (Map<String, Object>) call.argument("urlRequest");
-          webView.loadUrl(URLRequest.fromMap(urlRequest));
-        }
-        result.success(true);
+          targetWebView.loadUrl(URLRequest.fromMap(urlRequest));
+        });
         break;
       case waitForInitialJavaScriptBridgeReady:
         final InAppWebView expectedWebView = webView;
@@ -127,36 +171,27 @@ public class WebViewChannelDelegate extends ChannelDelegateImpl {
         });
         break;
       case postUrl:
-        if (webView != null) {
+        runInitialNavigation(result, targetWebView -> {
           String url = (String) call.argument("url");
           byte[] postData = (byte[]) call.argument("postData");
-          webView.postUrl(url, postData);
-        }
-        result.success(true);
+          targetWebView.postUrl(url, postData);
+        });
         break;
       case loadData:
-        if (webView != null) {
+        runInitialNavigation(result, targetWebView -> {
           String data = (String) call.argument("data");
           String mimeType = (String) call.argument("mimeType");
           String encoding = (String) call.argument("encoding");
           String baseUrl = (String) call.argument("baseUrl");
           String historyUrl = (String) call.argument("historyUrl");
-          webView.loadDataWithBaseURL(baseUrl, data, mimeType, encoding, historyUrl);
-        }
-        result.success(true);
+          targetWebView.loadDataWithBaseURL(baseUrl, data, mimeType, encoding, historyUrl);
+        });
         break;
       case loadFile:
-        if (webView != null) {
+        runInitialNavigation(result, targetWebView -> {
           String assetFilePath = (String) call.argument("assetFilePath");
-          try {
-            webView.loadFile(assetFilePath);
-          } catch (IOException e) {
-            e.printStackTrace();
-            result.error(LOG_TAG, e.getMessage(), null);
-            return;
-          }
-        }
-        result.success(true);
+          targetWebView.loadFile(assetFilePath);
+        });
         break;
       case evaluateJavascript:
         if (webView != null) {

@@ -1,5 +1,7 @@
 ## 1.2.0-beta.3
 
+- Made explicit initial URL, POST, data and file loads wait for Bridge registration, preserving navigation order and stopLoading cancellation without delaying initialized navigations
+- Fixed popup readiness returning before initial script preparation; popup scripts now wait for transport handoff without depending on View attachment
 - Preserved Bridge-before-user-script registration order, including asynchronous startup retries
 - Fixed bridge readiness stalling in unattached Headless WebViews and made InAppBrowser initial navigation wait for script registration and retries
 - Added an Android WebView startup barrier and cancellable initial script registration to avoid cold-start bridge loss
