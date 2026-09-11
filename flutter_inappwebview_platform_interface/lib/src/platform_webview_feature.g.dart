@@ -452,6 +452,10 @@ class WebViewFeature {
   ) =>
       PlatformWebViewFeature.static().isStartupFeatureSupported(startupFeature);
 
+  ///{@macro flutter_inappwebview_platform_interface.PlatformWebViewFeature.startUpWebView}
+  static Future<void> startUpWebView() =>
+      PlatformWebViewFeature.static().startUpWebView();
+
   ///Gets [String] value.
   String toValue() => _value;
 
@@ -1188,6 +1192,17 @@ enum PlatformWebViewFeatureMethod {
   ///Use the [PlatformWebViewFeature.isMethodSupported] method to check if this method is supported at runtime.
   ///{@endtemplate}
   isStartupFeatureSupported,
+
+  ///Can be used to check if the [PlatformWebViewFeature.startUpWebView] method is supported at runtime.
+  ///
+  ///{@template flutter_inappwebview_platform_interface.PlatformWebViewFeature.startUpWebView.supported_platforms}
+  ///
+  ///**Officially Supported Platforms/Implementations**:
+  ///- Android WebView 24+ ([Official API - WebViewCompat.startUpWebView](https://developer.android.com/reference/androidx/webkit/WebViewCompat#startUpWebView(android.content.Context,androidx.webkit.WebViewStartUpConfig,androidx.webkit.WebViewOutcomeReceiver)))
+  ///
+  ///Use the [PlatformWebViewFeature.isMethodSupported] method to check if this method is supported at runtime.
+  ///{@endtemplate}
+  startUpWebView,
 }
 
 extension _PlatformWebViewFeatureMethodSupported on PlatformWebViewFeature {
@@ -1202,6 +1217,11 @@ extension _PlatformWebViewFeatureMethodSupported on PlatformWebViewFeature {
               TargetPlatform.android,
             ].contains(platform ?? defaultTargetPlatform);
       case PlatformWebViewFeatureMethod.isStartupFeatureSupported:
+        return ((kIsWeb && platform != null) || !kIsWeb) &&
+            [
+              TargetPlatform.android,
+            ].contains(platform ?? defaultTargetPlatform);
+      case PlatformWebViewFeatureMethod.startUpWebView:
         return ((kIsWeb && platform != null) || !kIsWeb) &&
             [
               TargetPlatform.android,

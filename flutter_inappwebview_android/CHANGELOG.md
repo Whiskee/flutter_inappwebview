@@ -1,5 +1,7 @@
 ## 1.2.0-beta.3
 
+- Added an Android WebView startup barrier and cancellable initial script registration to avoid cold-start bridge loss
+- Updated `androidx.webkit:webkit` from `1.14.0` to `1.16.0` and minimum Android SDK from 19 to 24
 - Updated flutter_inappwebview_platform_interface version to ^1.4.0-beta.3
 - Updated native dependencies:
   - implementation from `'androidx.webkit:webkit:1.12.0'` to `'androidx.webkit:webkit:1.14.0'`

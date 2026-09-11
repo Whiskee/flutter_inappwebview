@@ -103,6 +103,45 @@ public class WebViewChannelDelegate extends ChannelDelegateImpl {
         }
         result.success(true);
         break;
+      case waitForInitialJavaScriptBridgeReady:
+        final InAppWebView expectedWebView = webView;
+        if (expectedWebView == null) {
+          result.error(LOG_TAG, "WebView was disposed before bridge registration", null);
+          break;
+        }
+        // All bridge/script registrations created during prepare() use the
+        // same UI-thread View.post queue. After that queue marker, also wait
+        // for registrations retried behind asynchronous WebView startup.
+        expectedWebView.post(new Runnable() {
+          @Override
+          public void run() {
+            if (webView != expectedWebView
+                    || expectedWebView.getUserContentController().isDisposed()) {
+              result.error(LOG_TAG, "WebView was disposed before bridge registration", null);
+              return;
+            }
+            expectedWebView.getUserContentController()
+                    .runWhenScriptRegistrationsComplete(new Runnable() {
+                      @Override
+                      public void run() {
+                        if (webView != expectedWebView
+                                || expectedWebView.getUserContentController().isDisposed()) {
+                          result.error(LOG_TAG, "WebView was disposed before bridge registration", null);
+                          return;
+                        }
+                        Throwable registrationError = expectedWebView
+                                .getUserContentController()
+                                .getScriptRegistrationError();
+                        if (registrationError != null) {
+                          result.error(LOG_TAG, registrationError.getMessage(), null);
+                        } else {
+                          result.success(true);
+                        }
+                      }
+                    });
+          }
+        });
+        break;
       case postUrl:
         if (webView != null) {
           String url = (String) call.argument("url");

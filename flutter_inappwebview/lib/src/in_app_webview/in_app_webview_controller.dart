@@ -113,6 +113,10 @@ class InAppWebViewController {
     allowingReadAccessTo: allowingReadAccessTo,
   );
 
+  ///{@macro flutter_inappwebview_platform_interface.PlatformInAppWebViewController.waitForInitialJavaScriptBridgeReady}
+  Future<void> waitForInitialJavaScriptBridgeReady() =>
+      platform.waitForInitialJavaScriptBridgeReady();
+
   ///{@macro flutter_inappwebview_platform_interface.PlatformInAppWebViewController.postUrl}
   ///
   ///{@macro flutter_inappwebview_platform_interface.PlatformInAppWebViewController.postUrl.supported_platforms}

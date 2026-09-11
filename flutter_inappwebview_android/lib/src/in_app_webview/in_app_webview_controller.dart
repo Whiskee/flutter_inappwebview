@@ -2096,6 +2096,11 @@ class AndroidInAppWebViewController extends PlatformInAppWebViewController
   }
 
   @override
+  Future<void> waitForInitialJavaScriptBridgeReady() async {
+    await channel?.invokeMethod<void>('waitForInitialJavaScriptBridgeReady');
+  }
+
+  @override
   Future<void> postUrl({
     required WebUri url,
     required Uint8List postData,
