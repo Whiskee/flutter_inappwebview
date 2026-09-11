@@ -5,6 +5,7 @@ public enum WebViewChannelDelegateMethods {
   getTitle,
   getProgress,
   loadUrl,
+  waitForInitialJavaScriptBridgeReady,
   postUrl,
   loadData,
   loadFile,

@@ -2507,6 +2507,17 @@ enum PlatformInAppWebViewControllerMethod {
   ///{@endtemplate}
   terminateWebProcess,
 
+  ///Can be used to check if the [PlatformInAppWebViewController.waitForInitialJavaScriptBridgeReady] method is supported at runtime.
+  ///
+  ///{@template flutter_inappwebview_platform_interface.PlatformInAppWebViewController.waitForInitialJavaScriptBridgeReady.supported_platforms}
+  ///
+  ///**Officially Supported Platforms/Implementations**:
+  ///- Android WebView ([Official API - Handler.post](https://developer.android.com/reference/android/os/Handler#post(java.lang.Runnable)))
+  ///
+  ///Use the [PlatformInAppWebViewController.isMethodSupported] method to check if this method is supported at runtime.
+  ///{@endtemplate}
+  waitForInitialJavaScriptBridgeReady,
+
   ///Can be used to check if the [PlatformInAppWebViewController.zoomBy] method is supported at runtime.
   ///
   ///{@template flutter_inappwebview_platform_interface.PlatformInAppWebViewController.zoomBy.supported_platforms}
@@ -3705,6 +3716,12 @@ extension _PlatformInAppWebViewControllerMethodSupported
       case PlatformInAppWebViewControllerMethod.terminateWebProcess:
         return ((kIsWeb && platform != null) || !kIsWeb) &&
             [TargetPlatform.linux].contains(platform ?? defaultTargetPlatform);
+      case PlatformInAppWebViewControllerMethod
+          .waitForInitialJavaScriptBridgeReady:
+        return ((kIsWeb && platform != null) || !kIsWeb) &&
+            [
+              TargetPlatform.android,
+            ].contains(platform ?? defaultTargetPlatform);
       case PlatformInAppWebViewControllerMethod.zoomBy:
         return ((kIsWeb && platform != null) || !kIsWeb) &&
             [

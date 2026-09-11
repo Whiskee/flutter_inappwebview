@@ -142,6 +142,29 @@ abstract class PlatformWebViewFeature extends PlatformInterface {
     );
   }
 
+  ///{@template flutter_inappwebview_platform_interface.PlatformWebViewFeature.startUpWebView}
+  ///Starts the Android WebView engine asynchronously and completes only after
+  ///the engine is ready for calls to `android.webkit` and `androidx.webkit`.
+  ///
+  ///Call this before creating the first WebView when startup-time bridge or
+  ///document-start script registration must be deterministic.
+  ///{@endtemplate}
+  @SupportedPlatforms(
+    platforms: [
+      AndroidPlatform(
+        available: '24',
+        apiName: 'WebViewCompat.startUpWebView',
+        apiUrl:
+            'https://developer.android.com/reference/androidx/webkit/WebViewCompat#startUpWebView(android.content.Context,androidx.webkit.WebViewStartUpConfig,androidx.webkit.WebViewOutcomeReceiver)',
+      ),
+    ],
+  )
+  Future<void> startUpWebView() {
+    throw UnimplementedError(
+      'startUpWebView is not implemented on the current platform',
+    );
+  }
+
   ///{@macro flutter_inappwebview_platform_interface.PlatformWebViewFeatureCreationParams.isClassSupported}
   bool isClassSupported({TargetPlatform? platform}) =>
       params.isClassSupported(platform: platform);
@@ -426,6 +449,10 @@ class WebViewFeature_ {
     WebViewFeature startupFeature,
   ) =>
       PlatformWebViewFeature.static().isStartupFeatureSupported(startupFeature);
+
+  ///{@macro flutter_inappwebview_platform_interface.PlatformWebViewFeature.startUpWebView}
+  static Future<void> startUpWebView() =>
+      PlatformWebViewFeature.static().startUpWebView();
 }
 
 ///Class that represents an Android-specific utility class for checking which WebView Support Library features are supported on the device.

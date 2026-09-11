@@ -34,6 +34,26 @@ public class WebViewFeatureManager extends ChannelDelegateImpl {
           result.success(WebViewFeature.isStartupFeatureSupported(plugin.activity, startupFeature));
         }
         break;
+      case "startUpWebView":
+        if (plugin == null) {
+          result.error(LOG_TAG, "Plugin is detached", null);
+          break;
+        }
+        WebViewStartupCoordinator.ensureStarted(
+                plugin.applicationContext,
+                new WebViewStartupCoordinator.Callback() {
+                  @Override
+                  public void onSuccess() {
+                    result.success(null);
+                  }
+
+                  @Override
+                  public void onError(@NonNull Throwable error) {
+                    result.error(LOG_TAG, error.getMessage(), null);
+                  }
+                }
+        );
+        break;
       default:
         result.notImplemented();
     }

@@ -7,14 +7,12 @@ import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Message;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
-import android.webkit.WebView;
 import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
 import android.widget.SearchView;
@@ -173,43 +171,50 @@ public class InAppBrowserActivity extends AppCompatActivity implements InAppBrow
         userScripts.add(UserScript.fromMap(initialUserScript));
       }
     }
-    webView.userContentController.addUserOnlyScripts(userScripts);
-
     actionBar = getSupportActionBar();
 
-    prepareView();
+    // Both regular pages and popups must enqueue user scripts in the same
+    // initial batch as the Bridge, after popup transport when applicable.
+    prepareView(userScripts);
 
     if (windowId != -1) {
-      if (webView.plugin != null && webView.plugin.inAppWebViewManager != null) {
-        Message resultMsg = webView.plugin.inAppWebViewManager.windowWebViewMessages.get(windowId);
-        if (resultMsg != null) {
-          ((WebView.WebViewTransport) resultMsg.obj).setWebView(webView);
-          resultMsg.sendToTarget();
-        }
-      }
+      webView.completeWindowCreation();
     } else {
-      String initialFile = b.getString("initialFile");
-      Map<String, Object> initialUrlRequest = (Map<String, Object>) b.getSerializable("initialUrlRequest");
-      String initialData = b.getString("initialData");
-      if (initialFile != null) {
-        try {
-          webView.loadFile(initialFile);
-        } catch (IOException e) {
-          Log.e(LOG_TAG, initialFile + " asset file cannot be found!", e);
-          return;
+      final InAppWebView expectedWebView = webView;
+      expectedWebView.runWhenInitialJavaScriptBridgeReadyForNavigation(new InAppWebView.InitialNavigationCallback() {
+        @Override
+        public void onSuccess() {
+          if (webView != expectedWebView || isFinishing() || isDestroyed()) {
+            return;
+          }
+          String initialFile = b.getString("initialFile");
+          Map<String, Object> initialUrlRequest = (Map<String, Object>) b.getSerializable("initialUrlRequest");
+          String initialData = b.getString("initialData");
+          if (initialFile != null) {
+            try {
+              expectedWebView.loadFile(initialFile);
+            } catch (IOException e) {
+              Log.e(LOG_TAG, initialFile + " asset file cannot be found!", e);
+            }
+          } else if (initialData != null) {
+            String mimeType = b.getString("initialMimeType");
+            String encoding = b.getString("initialEncoding");
+            String baseUrl = b.getString("initialBaseUrl");
+            String historyUrl = b.getString("initialHistoryUrl");
+            expectedWebView.loadDataWithBaseURL(baseUrl, initialData, mimeType, encoding, historyUrl);
+          } else if (initialUrlRequest != null) {
+            URLRequest urlRequest = URLRequest.fromMap(initialUrlRequest);
+            if (urlRequest != null) {
+              expectedWebView.loadUrl(urlRequest);
+            }
+          }
         }
-      } else if (initialData != null) {
-        String mimeType = b.getString("initialMimeType");
-        String encoding = b.getString("initialEncoding");
-        String baseUrl = b.getString("initialBaseUrl");
-        String historyUrl = b.getString("initialHistoryUrl");
-        webView.loadDataWithBaseURL(baseUrl, initialData, mimeType, encoding, historyUrl);
-      } else if (initialUrlRequest != null) {
-        URLRequest urlRequest = URLRequest.fromMap(initialUrlRequest);
-        if (urlRequest != null) {
-          webView.loadUrl(urlRequest);
+
+        @Override
+        public void onError(@NonNull Throwable error) {
+          Log.e(LOG_TAG, "Initial load cancelled: JavaScript bridge registration failed", error);
         }
-      }
+      });
     }
 
     if (channelDelegate != null) {
@@ -217,10 +222,10 @@ public class InAppBrowserActivity extends AppCompatActivity implements InAppBrow
     }
   }
 
-  private void prepareView() {
+  private void prepareView(List<UserScript> initialUserScripts) {
 
     if (webView != null) {
-      webView.prepare();
+      webView.prepare(initialUserScripts);
     }
 
     if (customSettings.hidden)

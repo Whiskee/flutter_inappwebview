@@ -69,6 +69,7 @@ import androidx.webkit.WebViewFeature;
 import com.pichillilorenzo.flutter_inappwebview_android.InAppWebViewFlutterPlugin;
 import com.pichillilorenzo.flutter_inappwebview_android.R;
 import com.pichillilorenzo.flutter_inappwebview_android.Util;
+import com.pichillilorenzo.flutter_inappwebview_android.WebViewStartupCoordinator;
 import com.pichillilorenzo.flutter_inappwebview_android.content_blocker.ContentBlocker;
 import com.pichillilorenzo.flutter_inappwebview_android.content_blocker.ContentBlockerAction;
 import com.pichillilorenzo.flutter_inappwebview_android.content_blocker.ContentBlockerHandler;
@@ -182,6 +183,9 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
   @NonNull
   private final String expectedBridgeSecret = UUID.randomUUID().toString();
   private boolean javaScriptBridgeEnabled = true;
+  private boolean initialJavaScriptBridgeReady = false;
+  private int pendingInitialNavigations = 0;
+  private long initialNavigationCancellationGeneration = 0;
 
   public InAppWebView(Context context) {
     super(context);
@@ -254,6 +258,11 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
     }
   }
 
+  public void prepare(@NonNull List<UserScript> initialUserScripts) {
+    this.initialUserOnlyScripts = new ArrayList<>(initialUserScripts);
+    prepare();
+  }
+
   @SuppressLint("RestrictedApi")
   public void prepare() {
     if (customSettings.alpha != null) {
@@ -272,7 +281,22 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
 
     if (javaScriptBridgeEnabled) {
       javaScriptBridgeInterface = new JavaScriptBridgeInterface(this, expectedBridgeSecret);
-      addJavascriptInterface(javaScriptBridgeInterface, JavaScriptBridgeJS.get_JAVASCRIPT_BRIDGE_NAME());
+      // Defer addJavascriptInterface to the next UI-thread message. Its binder
+      // IPC to the Chromium renderer process must not run while FlutterWebView
+      // is still synchronously building the platform view: doing so was observed
+      // to leave onWebViewCreated never fired on ~50% of release-build cold
+      // starts on real Android devices, with the failure toggling deterministically
+      // across kill-relaunch cycles. Debug builds were not affected.
+      // See UserContentController.addPluginScript for the equivalent defer applied
+      // to addDocumentStartJavaScript.
+      WebViewStartupCoordinator.postOnMain(new Runnable() {
+        @Override
+        public void run() {
+          if (!userContentController.isDisposed() && javaScriptBridgeInterface != null) {
+            addJavascriptInterface(javaScriptBridgeInterface, JavaScriptBridgeJS.get_JAVASCRIPT_BRIDGE_NAME());
+          }
+        }
+      });
     }
 
     inAppWebViewChromeClient = new InAppWebViewChromeClient(plugin, this, inAppBrowserDelegate);
@@ -593,7 +617,131 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
     });
   }
 
+  /** Completes after initial script preparation, bridge registration and all retries.
+   * Popup preparation may not have started yet, so an empty queue alone is not ready.
+   * A process-level Handler also runs for Headless WebViews without an Activity.
+   * Do not use mainLooperHandler: dispose() clears that queue, which would strand
+   * readiness callers instead of returning the disposed error. */
+  public void runWhenInitialJavaScriptBridgeReady(@NonNull WebViewStartupCoordinator.Callback callback) {
+    WebViewStartupCoordinator.postOnMain(() -> {
+      if (userContentController.isDisposed()) {
+        callback.onError(new IllegalStateException("WebView was disposed before bridge registration"));
+        return;
+      }
+      userContentController.runWhenScriptRegistrationsComplete(() -> {
+        if (userContentController.isDisposed()) {
+          callback.onError(new IllegalStateException("WebView was disposed before bridge registration"));
+          return;
+        }
+        Throwable error = userContentController.getScriptRegistrationError();
+        if (error != null) {
+          callback.onError(error);
+        } else {
+          callback.onSuccess();
+        }
+      });
+    });
+  }
+
+  public interface InitialNavigationCallback extends WebViewStartupCoordinator.Callback {
+    default void onCancelled() {}
+  }
+
+  /** All creation-time navigations share the registration barrier. Once startup
+   * is complete, ordinary navigation must not wait for later dynamic scripts.
+   * Keep subsequent requests queued while an earlier one is pending so the
+   * initialized fast path cannot overtake it. */
+  public void runWhenInitialJavaScriptBridgeReadyForNavigation(
+          @NonNull InitialNavigationCallback callback) {
+    if (initialJavaScriptBridgeReady && pendingInitialNavigations == 0
+            && !userContentController.isDisposed()) {
+      callback.onSuccess();
+      return;
+    }
+    final long cancellationGeneration = initialNavigationCancellationGeneration;
+    pendingInitialNavigations++;
+    runWhenInitialJavaScriptBridgeReady(new WebViewStartupCoordinator.Callback() {
+      @Override
+      public void onSuccess() {
+        pendingInitialNavigations--;
+        initialJavaScriptBridgeReady = true;
+        if (cancellationGeneration != initialNavigationCancellationGeneration) {
+          callback.onCancelled();
+        } else {
+          callback.onSuccess();
+        }
+      }
+
+      @Override
+      public void onError(@NonNull Throwable error) {
+        pendingInitialNavigations--;
+        if (!userContentController.isDisposed()
+                && cancellationGeneration != initialNavigationCancellationGeneration) {
+          callback.onCancelled();
+        } else {
+          callback.onError(error);
+        }
+      }
+    });
+  }
+
+  @Override
+  public void stopLoading() {
+    // A navigation waiting for scripts has not reached Chromium yet.
+    // Also invalidate those requests so they cannot start after stopLoading.
+    initialNavigationCancellationGeneration++;
+    super.stopLoading();
+  }
+
+  /** Supply the popup first, then prepare scripts on the following UI message.
+   * Registering before the handoff loses popup scripts (upstream issue #1455).
+   * A Handler preserves that order without requiring the View to be attached. */
+  public void completeWindowCreation() {
+    if (userContentController.isDisposed()) {
+      return;
+    }
+    Message resultMsg = plugin != null && plugin.inAppWebViewManager != null
+            ? plugin.inAppWebViewManager.windowWebViewMessages.get(windowId) : null;
+    if (resultMsg == null) {
+      userContentController.finishInitialScriptPreparation(
+              new IllegalStateException("Popup transport is unavailable"));
+      return;
+    }
+    try {
+      ((WebView.WebViewTransport) resultMsg.obj).setWebView(this);
+      resultMsg.sendToTarget();
+      if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+        WebViewStartupCoordinator.postOnMain(this::prepareAndAddUserScripts);
+      }
+      // Popups have no configured initial URL, but still need to settle the
+      // one-time navigation gate when their initial scripts finish registering.
+      runWhenInitialJavaScriptBridgeReadyForNavigation(new InitialNavigationCallback() {
+        @Override
+        public void onSuccess() {}
+
+        @Override
+        public void onError(@NonNull Throwable error) {
+          // Readiness and explicit navigation callers receive the actual error.
+        }
+      });
+    } catch (RuntimeException error) {
+      userContentController.finishInitialScriptPreparation(error);
+    }
+  }
+
   public void prepareAndAddUserScripts() {
+    if (userContentController.isDisposed()) {
+      return;
+    }
+    try {
+      enqueueInitialUserScripts();
+      userContentController.finishInitialScriptPreparation(null);
+    } catch (RuntimeException error) {
+      userContentController.finishInitialScriptPreparation(error);
+    }
+  }
+
+  private void enqueueInitialUserScripts() {
     if (javaScriptBridgeEnabled) {
       // all the plugin scripts are using the JavaScript Bridge to work
       userContentController.addPluginScript(PromisePolyfillJS.PROMISE_POLYFILL_JS_PLUGIN_SCRIPT(customSettings.pluginScriptsOriginAllowList,

@@ -87,6 +87,11 @@ class AndroidWebViewFeature extends PlatformWebViewFeature
   }
 
   @override
+  Future<void> startUpWebView() async {
+    await channel?.invokeMethod<void>('startUpWebView');
+  }
+
+  @override
   void dispose() {
     // empty
   }

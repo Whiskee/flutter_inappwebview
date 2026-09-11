@@ -3,16 +3,13 @@ package com.pichillilorenzo.flutter_inappwebview_android.webview.in_app_webview;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.hardware.display.DisplayManager;
-import android.os.Message;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
-import android.webkit.WebView;
 import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.webkit.WebViewFeature;
 
 import com.pichillilorenzo.flutter_inappwebview_android.InAppWebViewFlutterPlugin;
 import com.pichillilorenzo.flutter_inappwebview_android.find_interaction.FindInteractionController;
@@ -94,57 +91,50 @@ public class FlutterWebView implements PlatformWebView {
     }
 
     Integer windowId = (Integer) params.get("windowId");
-    Map<String, Object> initialUrlRequest = (Map<String, Object>) params.get("initialUrlRequest");
+    final Map<String, Object> initialUrlRequest = (Map<String, Object>) params.get("initialUrlRequest");
     final String initialFile = (String) params.get("initialFile");
     final Map<String, String> initialData = (Map<String, String>) params.get("initialData");
 
     if (windowId != null) {
-      if (webView.plugin != null && webView.plugin.inAppWebViewManager != null) {
-        Message resultMsg = webView.plugin.inAppWebViewManager.windowWebViewMessages.get(windowId);
-        if (resultMsg != null) {
-          ((WebView.WebViewTransport) resultMsg.obj).setWebView(webView);
-          resultMsg.sendToTarget();
-          if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            // for some reason, if a WebView is created using a window id,
-            // the initial plugin and user scripts injected
-            // with WebViewCompat.addDocumentStartJavaScript will not be added!
-            // https://github.com/pichillilorenzo/flutter_inappwebview/issues/1455
-            //
-            // Also, calling the prepareAndAddUserScripts method right after won't work,
-            // so use the View.post method here.
-            webView.post(new Runnable() {
-              @Override
-              public void run() {
-                if (webView != null) {
-                  webView.prepareAndAddUserScripts();
-                }
-              }
-            });
+      webView.completeWindowCreation();
+    } else {
+      // The first navigation must also wait for asynchronous registration retries.
+      // This barrier does not require a Headless WebView to be attached to a window.
+      final InAppWebView expectedWebView = webView;
+      expectedWebView.runWhenInitialJavaScriptBridgeReadyForNavigation(new InAppWebView.InitialNavigationCallback() {
+        @Override
+        public void onSuccess() {
+          if (webView != expectedWebView) {
+            return;
+          }
+          if (initialFile != null) {
+            try {
+              expectedWebView.loadFile(initialFile);
+            } catch (IOException e) {
+              Log.e(LOG_TAG, initialFile + " asset file cannot be found!", e);
+            }
+          }
+          else if (initialData != null) {
+            String data = initialData.get("data");
+            String mimeType = initialData.get("mimeType");
+            String encoding = initialData.get("encoding");
+            String baseUrl = initialData.get("baseUrl");
+            String historyUrl = initialData.get("historyUrl");
+            expectedWebView.loadDataWithBaseURL(baseUrl, data, mimeType, encoding, historyUrl);
+          }
+          else if (initialUrlRequest != null) {
+            URLRequest urlRequest = URLRequest.fromMap(initialUrlRequest);
+            if (urlRequest != null) {
+              expectedWebView.loadUrl(urlRequest);
+            }
           }
         }
-      }
-    } else {
-      if (initialFile != null) {
-        try {
-          webView.loadFile(initialFile);
-        } catch (IOException e) {
-          Log.e(LOG_TAG, initialFile + " asset file cannot be found!", e);
+
+        @Override
+        public void onError(@NonNull Throwable error) {
+          Log.e(LOG_TAG, "Initial load cancelled: JavaScript bridge registration failed", error);
         }
-      }
-      else if (initialData != null) {
-        String data = initialData.get("data");
-        String mimeType = initialData.get("mimeType");
-        String encoding = initialData.get("encoding");
-        String baseUrl = initialData.get("baseUrl");
-        String historyUrl = initialData.get("historyUrl");
-        webView.loadDataWithBaseURL(baseUrl, data, mimeType, encoding, historyUrl);
-      }
-      else if (initialUrlRequest != null) {
-        URLRequest urlRequest = URLRequest.fromMap(initialUrlRequest);
-        if (urlRequest != null) {
-          webView.loadUrl(urlRequest);
-        }
-      }
+      });
     }
   }
 

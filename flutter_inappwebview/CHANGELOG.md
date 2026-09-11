@@ -1,5 +1,6 @@
 ## 6.2.0-beta.3
 
+- Added wrappers for Android WebView startup and initial JavaScript bridge readiness barriers
 - Added Linux support
 - Updated dependencies to the latest versions for all platform implementations:
   - `flutter_inappwebview_platform_interface`: `^1.4.0-beta.2` -> `^1.4.0-beta.3`

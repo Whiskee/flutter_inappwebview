@@ -13,6 +13,7 @@ import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 
 import com.pichillilorenzo.flutter_inappwebview_android.Util;
+import com.pichillilorenzo.flutter_inappwebview_android.WebViewStartupCoordinator;
 import com.pichillilorenzo.flutter_inappwebview_android.find_interaction.FindInteractionChannelDelegate;
 import com.pichillilorenzo.flutter_inappwebview_android.in_app_browser.InAppBrowserActivity;
 import com.pichillilorenzo.flutter_inappwebview_android.in_app_browser.InAppBrowserSettings;
@@ -77,6 +78,51 @@ public class WebViewChannelDelegate extends ChannelDelegateImpl {
     this.webView = webView;
   }
 
+  private interface InitialNavigation {
+    void load(InAppWebView webView) throws IOException;
+  }
+
+  private void runInitialNavigation(@NonNull MethodChannel.Result result,
+                                   @NonNull InitialNavigation navigation) {
+    final InAppWebView expectedWebView = webView;
+    if (expectedWebView == null) {
+      // Preserve the existing no-op result for calls after channel disposal.
+      result.success(true);
+      return;
+    }
+    expectedWebView.runWhenInitialJavaScriptBridgeReadyForNavigation(
+            new InAppWebView.InitialNavigationCallback() {
+              @Override
+              public void onSuccess() {
+                if (webView != expectedWebView || expectedWebView.userContentController.isDisposed()) {
+                  result.error(LOG_TAG, "WebView was disposed before initial navigation", null);
+                  return;
+                }
+                try {
+                  navigation.load(expectedWebView);
+                } catch (IOException | RuntimeException error) {
+                  // Deferred work no longer runs inside MethodChannel's
+                  // synchronous exception handler, so always finish the result.
+                  result.error(LOG_TAG, error.getMessage(), null);
+                  return;
+                }
+                result.success(true);
+              }
+
+              @Override
+              public void onCancelled() {
+                // loadUrl/Post/Data/File futures acknowledge issuing a request,
+                // not page completion. A stopped queued request is a no-op.
+                result.success(true);
+              }
+
+              @Override
+              public void onError(@NonNull Throwable error) {
+                result.error(LOG_TAG, error.getMessage(), null);
+              }
+            });
+  }
+
   @Override
   public void onMethodCall(@NonNull MethodCall call, @NonNull final MethodChannel.Result result) {
     WebViewChannelDelegateMethods method = null;
@@ -97,43 +143,55 @@ public class WebViewChannelDelegate extends ChannelDelegateImpl {
         result.success((webView != null) ? webView.getProgress() : null);
         break;
       case loadUrl:
-        if (webView != null) {
+        runInitialNavigation(result, targetWebView -> {
           Map<String, Object> urlRequest = (Map<String, Object>) call.argument("urlRequest");
-          webView.loadUrl(URLRequest.fromMap(urlRequest));
+          targetWebView.loadUrl(URLRequest.fromMap(urlRequest));
+        });
+        break;
+      case waitForInitialJavaScriptBridgeReady:
+        final InAppWebView expectedWebView = webView;
+        if (expectedWebView == null) {
+          result.error(LOG_TAG, "WebView was disposed before bridge registration", null);
+          break;
         }
-        result.success(true);
+        expectedWebView.runWhenInitialJavaScriptBridgeReady(new WebViewStartupCoordinator.Callback() {
+          @Override
+          public void onSuccess() {
+            if (webView != expectedWebView) {
+              result.error(LOG_TAG, "WebView was disposed before bridge registration", null);
+            } else {
+              result.success(true);
+            }
+          }
+
+          @Override
+          public void onError(@NonNull Throwable error) {
+            result.error(LOG_TAG, error.getMessage(), null);
+          }
+        });
         break;
       case postUrl:
-        if (webView != null) {
+        runInitialNavigation(result, targetWebView -> {
           String url = (String) call.argument("url");
           byte[] postData = (byte[]) call.argument("postData");
-          webView.postUrl(url, postData);
-        }
-        result.success(true);
+          targetWebView.postUrl(url, postData);
+        });
         break;
       case loadData:
-        if (webView != null) {
+        runInitialNavigation(result, targetWebView -> {
           String data = (String) call.argument("data");
           String mimeType = (String) call.argument("mimeType");
           String encoding = (String) call.argument("encoding");
           String baseUrl = (String) call.argument("baseUrl");
           String historyUrl = (String) call.argument("historyUrl");
-          webView.loadDataWithBaseURL(baseUrl, data, mimeType, encoding, historyUrl);
-        }
-        result.success(true);
+          targetWebView.loadDataWithBaseURL(baseUrl, data, mimeType, encoding, historyUrl);
+        });
         break;
       case loadFile:
-        if (webView != null) {
+        runInitialNavigation(result, targetWebView -> {
           String assetFilePath = (String) call.argument("assetFilePath");
-          try {
-            webView.loadFile(assetFilePath);
-          } catch (IOException e) {
-            e.printStackTrace();
-            result.error(LOG_TAG, e.getMessage(), null);
-            return;
-          }
-        }
-        result.success(true);
+          targetWebView.loadFile(assetFilePath);
+        });
         break;
       case evaluateJavascript:
         if (webView != null) {
@@ -547,7 +605,28 @@ public class WebViewChannelDelegate extends ChannelDelegateImpl {
         if (webView != null && webView.getUserContentController() != null) {
           Map<String, Object> userScriptMap = (Map<String, Object>) call.argument("userScript");
           UserScript userScript = UserScript.fromMap(userScriptMap);
-          result.success(webView.getUserContentController().addUserOnlyScript(userScript));
+          final InAppWebView scriptWebView = webView;
+          if (!scriptWebView.getUserContentController().addUserOnlyScript(userScript)) {
+            result.success(false);
+            break;
+          }
+          // Preserve await addUserScript(); loadUrl() semantics now that user
+          // scripts share the asynchronous registration queue with the Bridge.
+          scriptWebView.runWhenInitialJavaScriptBridgeReady(new WebViewStartupCoordinator.Callback() {
+            @Override
+            public void onSuccess() {
+              if (webView == scriptWebView) {
+                result.success(true);
+              } else {
+                result.error(LOG_TAG, "WebView was disposed before script registration", null);
+              }
+            }
+
+            @Override
+            public void onError(@NonNull Throwable error) {
+              result.error(LOG_TAG, error.getMessage(), null);
+            }
+          });
         } else {
           result.success(false);
         }
