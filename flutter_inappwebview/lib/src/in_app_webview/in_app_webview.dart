@@ -47,7 +47,7 @@ class InAppWebView extends StatefulWidget {
     HeadlessInAppWebView? headlessWebView,
     InAppWebViewKeepAlive? keepAlive,
     bool attachOnly = false,
-    void Function(bool attached)? onAttachResult,
+    void Function(bool? attached)? onAttachResult,
     VoidCallback? onAttachStart,
     bool? preventGestureDelay,
     TextDirection? layoutDirection,

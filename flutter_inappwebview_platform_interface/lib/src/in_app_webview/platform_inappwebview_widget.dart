@@ -234,7 +234,8 @@ class PlatformInAppWebViewWidgetCreationParams
 
   /// Android native transfer acknowledgement, including unavailable=false.
   /// Delivered before ordinary onWebViewCreated, also if detached while pending.
-  final void Function(bool attached)? onAttachResult;
+  /// True is attached, false is an authoritative native miss, null is unknown.
+  final void Function(bool? attached)? onAttachResult;
 
   /// Android: called immediately before submitting a strict platform create.
   final VoidCallback? onAttachStart;

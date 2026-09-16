@@ -62,7 +62,13 @@ class AndroidInAppWebViewController extends PlatformInAppWebViewController
   Set<AndroidWebMessageListener> _webMessageListeners = Set();
 
   // static map that contains the properties to be saved and restored for keep alive feature
-  static final Map<InAppWebViewKeepAlive, InAppWebViewControllerKeepAliveProps?>
+  static final Map<
+    InAppWebViewKeepAlive,
+    ({
+      InAppWebViewControllerKeepAliveProps props,
+      AndroidInAppWebViewController? owner,
+    })?
+  >
   _keepAliveMap = {};
 
   AndroidInAppBrowser? _inAppBrowser;
@@ -164,10 +170,11 @@ class AndroidInAppWebViewController extends PlatformInAppWebViewController
           (params.webviewParams as PlatformInAppWebViewWidgetCreationParams)
               .keepAlive;
       if (keepAlive != null) {
-        InAppWebViewControllerKeepAliveProps? props = _keepAliveMap[keepAlive];
+        final previous = _keepAliveMap[keepAlive];
+        var props = previous?.props;
         if (props == null) {
           // save controller properties to restore it later
-          _keepAliveMap[keepAlive] = InAppWebViewControllerKeepAliveProps(
+          props = InAppWebViewControllerKeepAliveProps(
             injectedScriptsFromURL: _injectedScriptsFromURL,
             javaScriptHandlersMap: _javaScriptHandlersMap,
             userScripts: _userScripts,
@@ -186,6 +193,17 @@ class AndroidInAppWebViewController extends PlatformInAppWebViewController
           _webMessageListeners =
               props.webMessageListeners as Set<AndroidWebMessageListener>;
         }
+        // Only strict runtime attachments retain a live Dart bridge. Supersede
+        // the old presenter without unregistering this controller's new handler.
+        previous?.owner?._retireAttachmentController();
+        _keepAliveMap[keepAlive] = (
+          props: props,
+          owner:
+              (params.webviewParams as PlatformInAppWebViewWidgetCreationParams)
+                  .attachOnly
+              ? this
+              : null,
+        );
       }
     }
   }
@@ -3155,7 +3173,12 @@ class AndroidInAppWebViewController extends PlatformInAppWebViewController
   Future<void> disposeKeepAlive(InAppWebViewKeepAlive keepAlive) async {
     Map<String, dynamic> args = <String, dynamic>{};
     args.putIfAbsent('keepAliveId', () => keepAlive.id);
-    await _staticChannel.invokeMethod('disposeKeepAlive', args);
+    await Future.wait<void>([
+      Future<void>.sync(() => _keepAliveMap[keepAlive]?.owner?.dispose()),
+      Future<void>.sync(
+        () async => await _staticChannel.invokeMethod('disposeKeepAlive', args),
+      ),
+    ], eagerError: false);
     _keepAliveMap[keepAlive] = null;
   }
 
@@ -3210,6 +3233,14 @@ class AndroidInAppWebViewController extends PlatformInAppWebViewController
 
   @override
   void dispose({bool isKeepAlive = false}) {
+    if (disposed) return;
+    final params = webviewParams;
+    if (isKeepAlive &&
+        params is PlatformInAppWebViewWidgetCreationParams &&
+        params.attachOnly &&
+        identical(_keepAliveMap[params.keepAlive]?.owner, this)) {
+      return;
+    }
     disposeChannel(removeMethodCallHandler: !isKeepAlive);
     _inAppBrowser = null;
     webStorage.dispose();
@@ -3228,6 +3259,13 @@ class AndroidInAppWebViewController extends PlatformInAppWebViewController
       }
       _webMessageListeners.clear();
     }
+  }
+
+  void _retireAttachmentController() {
+    if (disposed) return;
+    disposeChannel(removeMethodCallHandler: false);
+    webStorage.dispose();
+    _controllerFromPlatform = null;
   }
 }
 

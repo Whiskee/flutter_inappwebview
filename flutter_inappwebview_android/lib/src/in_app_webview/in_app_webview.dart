@@ -411,18 +411,16 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
 
   void _onPlatformViewCreated(int id) async {
     if (params.attachOnly) {
-      var attached = false;
+      bool? attached;
       try {
-        attached =
-            await MethodChannel(
-              'com.pichillilorenzo/flutter_inappwebview_attach_$id',
-            ).invokeMethod<bool>('isAttached') ==
-            true;
+        attached = await MethodChannel(
+          'com.pichillilorenzo/flutter_inappwebview_attach_$id',
+        ).invokeMethod<bool>('isAttached');
       } catch (_) {
-        // Missing/failed native acknowledgement cannot become a successful view.
+        // A lost reply is not proof that the native transfer did not happen.
       }
       params.onAttachResult?.call(attached);
-      if (!attached || _disposed) return;
+      if (attached != true || _disposed) return;
     }
     dynamic viewId = id;
     if (params.headlessWebView?.isRunning() ?? false) {
