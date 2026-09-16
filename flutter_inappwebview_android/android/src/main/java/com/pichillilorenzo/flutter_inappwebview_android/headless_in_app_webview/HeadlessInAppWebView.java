@@ -87,25 +87,31 @@ public class HeadlessInAppWebView implements Disposable {
           View view = flutterWebView.getView();
           if (view != null) {
             mainView.addView(view, 0);
-            // CHANGED FROM UPSTREAM: enable the always-visible-to-Chromium hack
-            // on the just-attached WebView. This MUST happen after addView()
-            // because setKeepAlwaysVisibleForChromium also calls
-            // super.onWindowVisibilityChanged(VISIBLE) once, and that has no
-            // effect until the View is attached to a window.
-            //
-            // IMPORTANT: flutterWebView.getView() returns the
-            // pullToRefreshLayout wrapper when one exists — NOT the
-            // InAppWebView itself. Use flutterWebView.webView directly so the
-            // {@code instanceof InputAwareWebView} check actually succeeds.
-            // (Earlier revisions used `view` here and silently no-op'd because
-            // the PullToRefreshLayout wrapper is not an InputAwareWebView.)
-            if (flutterWebView.webView instanceof InputAwareWebView) {
-              ((InputAwareWebView) flutterWebView.webView)
-                  .setKeepAlwaysVisibleForChromium(true);
-            }
           }
         }
       }
+    }
+    // CHANGED FROM UPSTREAM: enable the always-visible-to-Chromium hack.
+    //
+    // This is armed *after* the optional addView() above, because
+    // setKeepAlwaysVisibleForChromium also calls
+    // super.onWindowVisibilityChanged(VISIBLE) once, and that one-shot signal
+    // only reaches Chromium when the View is already attached to a window.
+    //
+    // It must NOT be nested inside the `plugin.activity != null` branch: a
+    // headless WebView started from a background CDM / PendingIntent wake-up
+    // has no Activity at all, which is exactly the case this anti-throttling
+    // hack exists for. The flag itself has no Activity dependency — it only
+    // gates this class' visibility callbacks and getters.
+    //
+    // IMPORTANT: flutterWebView.getView() returns the pullToRefreshLayout
+    // wrapper when one exists — NOT the InAppWebView itself. Use
+    // flutterWebView.webView directly so the {@code instanceof
+    // InputAwareWebView} check actually succeeds. (Earlier revisions used the
+    // wrapper here and silently no-op'd.)
+    if (flutterWebView != null && flutterWebView.webView instanceof InputAwareWebView) {
+      ((InputAwareWebView) flutterWebView.webView)
+          .setKeepAlwaysVisibleForChromium(true);
     }
   }
   
@@ -165,6 +171,12 @@ public class HeadlessInAppWebView implements Disposable {
           ((InputAwareWebView) flutterWebView.webView)
               .setKeepAlwaysVisibleForChromium(false);
         }
+        // The disarm above is only correct while a presenter is showing this
+        // WebView. A retained (keep-alive) WebView that outlives its presenter
+        // is back to running without any window, so FlutterWebView.dispose()
+        // must re-arm it — otherwise the very first foreground presentation
+        // permanently returns the background runtime to Chromium throttling.
+        flutterWebView.restoreKeepAlwaysVisibleForChromiumOnRelease = true;
         // remove from parent
         ViewGroup parent = (ViewGroup) view.getParent();
         if (parent != null) {

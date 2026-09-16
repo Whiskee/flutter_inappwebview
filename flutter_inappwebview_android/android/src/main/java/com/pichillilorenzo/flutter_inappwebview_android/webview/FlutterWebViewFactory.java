@@ -42,7 +42,12 @@ public class FlutterWebViewFactory extends PlatformViewFactory {
       if (headlessWebViewId != null) {
         HeadlessInAppWebView headless = plugin.headlessInAppWebViewManager == null ? null :
             plugin.headlessInAppWebViewManager.webViews.get(headlessWebViewId);
-        if (headless != null && (keepAliveId == null || headlessWebViewId.equals(keepAliveId))) {
+        // A retention key is required, not optional: the takeover below moves the
+        // WebView out of its headless owner, and without a keep-alive entry
+        // nothing holds it afterwards, so this presenter's disposal would destroy
+        // a live background WebView it was only asked to display. Refusing keeps
+        // the headless runtime untouched and reports an authoritative miss.
+        if (headless != null && headlessWebViewId.equals(keepAliveId)) {
           target = headless.flutterWebView;
         }
       } else if (keepAliveId != null && plugin.inAppWebViewManager != null) {

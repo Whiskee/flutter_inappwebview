@@ -123,6 +123,29 @@ public class FlutterWebViewFactoryTest {
     }
   }
 
+  @Test public void strictHeadlessWithoutRetentionKeyCannotConsumeTheLiveWebView() {
+    InAppWebViewFlutterPlugin plugin = plugin();
+    FlutterWebView runtime = mock(FlutterWebView.class, CALLS_REAL_METHODS);
+    InAppWebView nativeView = mock(InAppWebView.class);
+    runtime.webView = nativeView;
+    HeadlessInAppWebView headless = new HeadlessInAppWebView(plugin, "A", runtime);
+    plugin.headlessInAppWebViewManager.webViews.put("A", headless);
+    HashMap<String, Object> params = new HashMap<>();
+    params.put("attachOnly", true);
+    params.put("headlessWebViewId", "A");
+    try (MockedConstruction<FlutterWebView> allocated = mockConstruction(FlutterWebView.class);
+         MockedConstruction<View> views = mockConstruction(View.class)) {
+      PlatformView presenter = new FlutterWebViewFactory(plugin)
+          .create(mock(Context.class), 14, params);
+      assertFalse(attached(plugin, 14));
+      assertSame(runtime, headless.flutterWebView); // Headless owner keeps running.
+      presenter.dispose();
+      verify(nativeView, never()).dispose();
+      assertEquals(0, allocated.constructed().size());
+      assertFalse(plugin.inAppWebViewManager.keepAliveWebViews.containsKey("A"));
+    }
+  }
+
   @Test public void strictMissingHeadlessCannotBorrowAnotherKeepAliveOwner() {
     InAppWebViewFlutterPlugin plugin = plugin();
     FlutterWebView successor = mock(FlutterWebView.class);

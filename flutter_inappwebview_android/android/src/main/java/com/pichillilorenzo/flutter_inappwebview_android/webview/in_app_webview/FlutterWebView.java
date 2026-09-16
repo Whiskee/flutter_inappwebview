@@ -37,6 +37,9 @@ public class FlutterWebView implements PlatformWebView {
   public String keepAliveId;
   // One strict presenter may claim this exact live instance until detach.
   public boolean attachOnlyClaimed;
+  // Set by the headless takeover, which disarms the always-visible-to-Chromium
+  // hack for the duration of the presentation.
+  public boolean restoreKeepAlwaysVisibleForChromiumOnRelease;
 
   public FlutterWebView(final InAppWebViewFlutterPlugin plugin, final Context context, Object id,
                         HashMap<String, Object> params) {
@@ -150,6 +153,13 @@ public class FlutterWebView implements PlatformWebView {
         pullToRefreshLayout.dispose();
         pullToRefreshLayout = null;
       }
+      return;
+    }
+    // Surviving the presenter means going back to running with no window, so a
+    // WebView taken over from a headless runtime has to get its anti-throttling
+    // hack back; the takeover only disarmed it for the presentation.
+    if (restoreKeepAlwaysVisibleForChromiumOnRelease && webView != null) {
+      webView.setKeepAlwaysVisibleForChromium(true);
     }
   }
 
