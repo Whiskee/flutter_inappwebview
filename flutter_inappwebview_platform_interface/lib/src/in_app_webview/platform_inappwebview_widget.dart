@@ -43,6 +43,9 @@ class PlatformInAppWebViewWidgetCreationParams
     this.gestureRecognizers,
     this.headlessWebView,
     this.keepAlive,
+    this.attachOnly = false,
+    this.onAttachResult,
+    this.onAttachStart,
     this.preventGestureDelay,
     this.webViewEnvironment,
     super.controllerFromPlatform,
@@ -224,6 +227,17 @@ class PlatformInAppWebViewWidgetCreationParams
     ],
   )
   final InAppWebViewKeepAlive? keepAlive;
+
+  /// Android: transfer only the exact headless/keep-alive target. Never load a
+  /// replacement on a miss. Other platform behavior is unchanged.
+  final bool attachOnly;
+
+  /// Android native transfer acknowledgement, including unavailable=false.
+  /// Delivered before ordinary onWebViewCreated, also if detached while pending.
+  final void Function(bool attached)? onAttachResult;
+
+  /// Android: called immediately before submitting a strict platform create.
+  final VoidCallback? onAttachStart;
 
   ///{@template flutter_inappwebview_platform_interface.PlatformInAppWebViewWidgetCreationParams.webViewEnvironment}
   ///Used to prevent gesture delay on iOS caused by Flutter's gestures handling

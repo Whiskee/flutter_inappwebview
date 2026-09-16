@@ -35,6 +35,8 @@ public class FlutterWebView implements PlatformWebView {
   public PullToRefreshLayout pullToRefreshLayout;
   @Nullable
   public String keepAliveId;
+  // One strict presenter may claim this exact live instance until detach.
+  public boolean attachOnlyClaimed;
 
   public FlutterWebView(final InAppWebViewFlutterPlugin plugin, final Context context, Object id,
                         HashMap<String, Object> params) {

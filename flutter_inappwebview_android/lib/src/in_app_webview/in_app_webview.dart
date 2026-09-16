@@ -24,6 +24,9 @@ class AndroidInAppWebViewWidgetCreationParams
     super.gestureRecognizers,
     super.headlessWebView,
     super.keepAlive,
+    super.attachOnly,
+    super.onAttachResult,
+    super.onAttachStart,
     super.preventGestureDelay,
     super.windowId,
     super.onWebViewCreated,
@@ -149,6 +152,9 @@ class AndroidInAppWebViewWidgetCreationParams
         gestureRecognizers: params.gestureRecognizers,
         headlessWebView: params.headlessWebView,
         keepAlive: params.keepAlive,
+        attachOnly: params.attachOnly,
+        onAttachResult: params.onAttachResult,
+        onAttachStart: params.onAttachStart,
         preventGestureDelay: params.preventGestureDelay,
         windowId: params.windowId,
         onWebViewCreated: params.onWebViewCreated,
@@ -283,6 +289,7 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
       params as AndroidInAppWebViewWidgetCreationParams;
 
   AndroidInAppWebViewController? _controller;
+  bool _disposed = false;
 
   AndroidHeadlessInAppWebView? get _androidHeadlessInAppWebView =>
       params.headlessWebView as AndroidHeadlessInAppWebView?;
@@ -340,6 +347,7 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
             );
           },
       onCreatePlatformView: (PlatformViewCreationParams params) {
+        if (this.params.attachOnly) this.params.onAttachStart?.call();
         return _createAndroidViewController(
             hybridComposition: useHybridComposition,
             id: params.id,
@@ -366,6 +374,7 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
                   [],
               'pullToRefreshSettings': pullToRefreshSettings,
               'keepAliveId': this.params.keepAlive?.id,
+              'attachOnly': this.params.attachOnly,
             },
           )
           ..addOnPlatformViewCreatedListener(params.onPlatformViewCreated)
@@ -400,7 +409,21 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
     );
   }
 
-  void _onPlatformViewCreated(int id) {
+  void _onPlatformViewCreated(int id) async {
+    if (params.attachOnly) {
+      var attached = false;
+      try {
+        attached =
+            await MethodChannel(
+              'com.pichillilorenzo/flutter_inappwebview_attach_$id',
+            ).invokeMethod<bool>('isAttached') ==
+            true;
+      } catch (_) {
+        // Missing/failed native acknowledgement cannot become a successful view.
+      }
+      params.onAttachResult?.call(attached);
+      if (!attached || _disposed) return;
+    }
     dynamic viewId = id;
     if (params.headlessWebView?.isRunning() ?? false) {
       viewId = params.headlessWebView?.id;
@@ -480,6 +503,7 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
 
   @override
   void dispose() {
+    _disposed = true;
     dynamic viewId = _controller?.getViewId();
     debugLog(
       className: runtimeType.toString(),
