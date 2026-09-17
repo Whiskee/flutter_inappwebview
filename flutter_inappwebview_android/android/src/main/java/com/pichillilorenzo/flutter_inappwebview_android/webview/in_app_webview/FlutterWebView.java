@@ -40,6 +40,10 @@ public class FlutterWebView implements PlatformWebView {
   // Set by the headless takeover, which disarms the always-visible-to-Chromium
   // hack for the duration of the presentation.
   public boolean restoreKeepAlwaysVisibleForChromiumOnRelease;
+  @Nullable
+  private ViewGroup.LayoutParams backgroundLayoutParams;
+  @Nullable
+  private Float backgroundAlpha;
 
   public FlutterWebView(final InAppWebViewFlutterPlugin plugin, final Context context, Object id,
                         HashMap<String, Object> params) {
@@ -93,6 +97,10 @@ public class FlutterWebView implements PlatformWebView {
   public void prepareForPresentation() {
     View view = getView();
     if (view != null) {
+      if (restoreKeepAlwaysVisibleForChromiumOnRelease && backgroundLayoutParams == null) {
+        backgroundLayoutParams = view.getLayoutParams();
+        backgroundAlpha = view.getAlpha();
+      }
       view.setLayoutParams(new FrameLayout.LayoutParams(
           ViewGroup.LayoutParams.MATCH_PARENT,
           ViewGroup.LayoutParams.MATCH_PARENT));
@@ -101,6 +109,23 @@ public class FlutterWebView implements PlatformWebView {
     }
     if (restoreKeepAlwaysVisibleForChromiumOnRelease && webView != null) {
       webView.setKeepAlwaysVisibleForChromium(false);
+    }
+  }
+
+  /** Restores the exact hidden headless geometry after a presenter releases it. */
+  private void prepareForBackgroundRuntime() {
+    View view = getView();
+    if (view != null) {
+      if (backgroundLayoutParams != null) {
+        view.setLayoutParams(backgroundLayoutParams);
+      }
+      view.setVisibility(View.VISIBLE);
+      view.setAlpha(backgroundAlpha != null ? backgroundAlpha : 0f);
+    }
+    backgroundLayoutParams = null;
+    backgroundAlpha = null;
+    if (webView != null) {
+      webView.setKeepAlwaysVisibleForChromium(true);
     }
   }
 
@@ -174,7 +199,7 @@ public class FlutterWebView implements PlatformWebView {
     // WebView taken over from a headless runtime has to get its anti-throttling
     // hack back; the takeover only disarmed it for the presentation.
     if (restoreKeepAlwaysVisibleForChromiumOnRelease && webView != null) {
-      webView.setKeepAlwaysVisibleForChromium(true);
+      prepareForBackgroundRuntime();
     }
   }
 

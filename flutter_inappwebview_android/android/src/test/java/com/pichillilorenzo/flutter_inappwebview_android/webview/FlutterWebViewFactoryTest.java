@@ -2,6 +2,7 @@ package com.pichillilorenzo.flutter_inappwebview_android.webview;
 
 import android.content.Context;
 import android.view.View;
+import android.widget.FrameLayout;
 import com.pichillilorenzo.flutter_inappwebview_android.InAppWebViewFlutterPlugin;
 import com.pichillilorenzo.flutter_inappwebview_android.headless_in_app_webview.HeadlessInAppWebView;
 import com.pichillilorenzo.flutter_inappwebview_android.headless_in_app_webview.HeadlessInAppWebViewManager;
@@ -47,6 +48,9 @@ public class FlutterWebViewFactoryTest {
     InAppWebViewFlutterPlugin plugin = plugin();
     FlutterWebView runtime = mock(FlutterWebView.class, CALLS_REAL_METHODS);
     InAppWebView nativeView = mock(InAppWebView.class);
+    FrameLayout.LayoutParams headlessLayout = new FrameLayout.LayoutParams(3, 5);
+    when(nativeView.getLayoutParams()).thenReturn(headlessLayout);
+    when(nativeView.getAlpha()).thenReturn(0f);
     runtime.webView = nativeView;
     HeadlessInAppWebView headless = new HeadlessInAppWebView(plugin, "A", runtime);
     plugin.headlessInAppWebViewManager.webViews.put("A", headless);
@@ -67,6 +71,8 @@ public class FlutterWebViewFactoryTest {
       assertFalse(attached(plugin, 11)); // Already claimed, not a second presenter.
       first.dispose();
       verify(nativeView, never()).dispose();
+      verify(nativeView).setLayoutParams(same(headlessLayout));
+      verify(nativeView).setAlpha(0f);
       PlatformView second = factory.create(mock(Context.class), 12, params);
       assertTrue(attached(plugin, 12));
       assertSame(nativeView, second.getView());
