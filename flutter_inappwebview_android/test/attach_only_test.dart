@@ -8,6 +8,43 @@ import 'package:flutter_inappwebview_platform_interface/flutter_inappwebview_pla
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'headless dispose treats a transferred native channel as consumed',
+    () async {
+      AndroidInAppWebViewPlatform.registerWith();
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(
+          'com.pichillilorenzo/flutter_headless_inappwebview',
+        ),
+        (_) async => true,
+      );
+      final headless = AndroidHeadlessInAppWebView(
+        AndroidHeadlessInAppWebViewCreationParams(),
+      );
+      await headless.run();
+      messenger.setMockMethodCallHandler(
+        MethodChannel(
+          'com.pichillilorenzo/flutter_headless_inappwebview_${headless.id}',
+        ),
+        (_) async => throw MissingPluginException(
+          'native headless owner was transferred to a platform view',
+        ),
+      );
+
+      await expectLater(headless.dispose(), completes);
+      expect(headless.isRunning(), isFalse);
+
+      messenger.setMockMethodCallHandler(
+        const MethodChannel(
+          'com.pichillilorenzo/flutter_headless_inappwebview',
+        ),
+        null,
+      );
+    },
+  );
+
   for (final strict in [false, true]) {
     testWidgets('controller retention is opt-in: attachOnly=$strict', (
       tester,

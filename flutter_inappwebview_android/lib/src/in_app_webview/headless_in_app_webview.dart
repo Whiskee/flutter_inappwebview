@@ -450,7 +450,13 @@ class AndroidHeadlessInAppWebView extends PlatformHeadlessInAppWebView
       return;
     }
     Map<String, dynamic> args = <String, dynamic>{};
-    await channel?.invokeMethod('dispose', args);
+    try {
+      await channel?.invokeMethod('dispose', args);
+    } on MissingPluginException {
+      // A strict native attach consumes the headless channel before Dart's
+      // platform-view callback can acknowledge the transfer. In that state
+      // the missing handler is cleanup evidence, not an unresolved owner.
+    }
     disposeChannel();
     _started = false;
     _running = false;
