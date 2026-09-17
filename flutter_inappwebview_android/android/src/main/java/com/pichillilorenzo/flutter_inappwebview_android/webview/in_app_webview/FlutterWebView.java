@@ -89,6 +89,21 @@ public class FlutterWebView implements PlatformWebView {
     return pullToRefreshLayout != null ? pullToRefreshLayout : webView;
   }
 
+  /** Restores normal foreground semantics before any retained presentation. */
+  public void prepareForPresentation() {
+    View view = getView();
+    if (view != null) {
+      view.setLayoutParams(new FrameLayout.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT,
+          ViewGroup.LayoutParams.MATCH_PARENT));
+      view.setVisibility(View.VISIBLE);
+      view.setAlpha(1f);
+    }
+    if (restoreKeepAlwaysVisibleForChromiumOnRelease && webView != null) {
+      webView.setKeepAlwaysVisibleForChromium(false);
+    }
+  }
+
   @SuppressLint("RestrictedApi")
   public void makeInitialLoad(HashMap<String, Object> params) {
     if (webView == null) {

@@ -70,6 +70,9 @@ public class FlutterWebViewFactoryTest {
       PlatformView second = factory.create(mock(Context.class), 12, params);
       assertTrue(attached(plugin, 12));
       assertSame(nativeView, second.getView());
+      // The first presenter re-arms anti-throttling when it releases the
+      // retained runtime. A later presenter must disarm it again.
+      verify(nativeView, times(2)).setKeepAlwaysVisibleForChromium(false);
       verify(runtime, never()).makeInitialLoad(any());
       assertEquals(0, allocated.constructed().size());
       plugin.inAppWebViewManager.disposeKeepAlive("A");

@@ -27,8 +27,7 @@ public final class WebViewStartupCoordinator {
   private enum State {
     NOT_STARTED,
     STARTING,
-    STARTED,
-    FAILED
+    STARTED
   }
 
   private static final Object LOCK = new Object();
@@ -38,8 +37,6 @@ public final class WebViewStartupCoordinator {
   private static final List<Callback> PENDING_CALLBACKS = new ArrayList<>();
 
   private static State state = State.NOT_STARTED;
-  private static Throwable startupError;
-
   private WebViewStartupCoordinator() {}
 
   /** Always enqueue, even on the UI thread, without waiting for View attachment.
@@ -53,12 +50,10 @@ public final class WebViewStartupCoordinator {
           @NonNull Callback callback
   ) {
     final State currentState;
-    final Throwable currentError;
     boolean shouldStart = false;
     synchronized (LOCK) {
       currentState = state;
-      currentError = startupError;
-      if (currentState == State.STARTED || currentState == State.FAILED) {
+      if (currentState == State.STARTED) {
         // Deliver the cached terminal result outside the lock.
       } else {
         PENDING_CALLBACKS.add(callback);
@@ -71,13 +66,6 @@ public final class WebViewStartupCoordinator {
 
     if (currentState == State.STARTED) {
       runOnMain(callback::onSuccess);
-      return;
-    }
-    if (currentState == State.FAILED) {
-      final Throwable error = currentError != null
-              ? currentError
-              : new IllegalStateException("Android WebView startup failed");
-      runOnMain(() -> callback.onError(error));
       return;
     }
     if (!shouldStart) {
@@ -110,8 +98,10 @@ public final class WebViewStartupCoordinator {
   private static void complete(Throwable error) {
     final List<Callback> callbacks;
     synchronized (LOCK) {
-      state = error == null ? State.STARTED : State.FAILED;
-      startupError = error;
+      // A startup exception belongs to this attempt, not to the process for
+      // the rest of its lifetime. Notify the joined callers and let a later
+      // owner retry. Successful startup remains process-wide.
+      state = error == null ? State.STARTED : State.NOT_STARTED;
       callbacks = new ArrayList<>(PENDING_CALLBACKS);
       PENDING_CALLBACKS.clear();
     }
