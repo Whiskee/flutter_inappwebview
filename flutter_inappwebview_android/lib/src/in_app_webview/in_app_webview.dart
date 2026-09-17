@@ -290,6 +290,14 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
 
   AndroidInAppWebViewController? _controller;
   bool _disposed = false;
+  bool _attachStarted = false;
+  bool _attachReported = false;
+
+  void _reportAttachResult(bool? attached) {
+    if (_attachReported) return;
+    _attachReported = true;
+    params.onAttachResult?.call(attached);
+  }
 
   AndroidHeadlessInAppWebView? get _androidHeadlessInAppWebView =>
       params.headlessWebView as AndroidHeadlessInAppWebView?;
@@ -347,7 +355,10 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
             );
           },
       onCreatePlatformView: (PlatformViewCreationParams params) {
-        if (this.params.attachOnly) this.params.onAttachStart?.call();
+        if (this.params.attachOnly) {
+          _attachStarted = true;
+          this.params.onAttachStart?.call();
+        }
         return _createAndroidViewController(
             hybridComposition: useHybridComposition,
             id: params.id,
@@ -419,7 +430,7 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
       } catch (_) {
         // A lost reply is not proof that the native transfer did not happen.
       }
-      params.onAttachResult?.call(attached);
+      _reportAttachResult(attached);
       if (attached != true || _disposed) return;
     }
     dynamic viewId = id;
@@ -502,6 +513,11 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
   @override
   void dispose() {
     _disposed = true;
+    if (params.attachOnly && _attachStarted && !_attachReported) {
+      // PlatformView disposal drops pending created callbacks. Report unknown
+      // so the runtime owner drains both the headless and keep-alive sides.
+      _reportAttachResult(null);
+    }
     dynamic viewId = _controller?.getViewId();
     debugLog(
       className: runtimeType.toString(),

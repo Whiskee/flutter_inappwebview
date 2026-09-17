@@ -159,10 +159,13 @@ void main() {
         expect(submitted, 1);
         expect(outcomes, isEmpty);
         expect(ready, 0);
-        if (detached) view.dispose();
+        if (detached) {
+          view.dispose();
+          expect(outcomes, [null]);
+        }
         reply.complete(true);
         await tester.pump();
-        expect(outcomes, [true]);
+        expect(outcomes, [if (detached) null else true]);
         expect(ready, detached ? 0 : 1);
         if (!detached) view.dispose();
         await tester.pumpWidget(const SizedBox());
