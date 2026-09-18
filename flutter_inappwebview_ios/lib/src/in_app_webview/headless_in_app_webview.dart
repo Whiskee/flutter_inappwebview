@@ -440,11 +440,20 @@ class IOSHeadlessInAppWebView extends PlatformHeadlessInAppWebView
 
   @override
   Future<void> dispose() async {
-    if (!_running) {
+    // `_started` rather than `_running`: native registers the instance and
+    // its channel before `run` can fail, so a run whose acknowledgement never
+    // arrived may still own a native WebView. Release by the original id; an
+    // instance native never created answers with MissingPluginException.
+    if (!_started) {
       return;
     }
     Map<String, dynamic> args = <String, dynamic>{};
-    await channel?.invokeMethod('dispose', args);
+    try {
+      await channel?.invokeMethod('dispose', args);
+    } on MissingPluginException {
+      // A run that failed before native registration has no handler; the
+      // missing handler is cleanup evidence, not an unresolved owner.
+    }
     disposeChannel();
     _started = false;
     _running = false;
