@@ -41,6 +41,14 @@ public class FlutterWebView implements PlatformWebView {
   // Set by the headless takeover, which disarms the always-visible-to-Chromium
   // hack for the duration of the presentation.
   public boolean restoreKeepAlwaysVisibleForChromiumOnRelease;
+  // The plugin is the only way to reach an Activity that attached after a
+  // background (CDM / PendingIntent) wake-up created this runtime windowless.
+  @Nullable
+  public InAppWebViewFlutterPlugin plugin;
+  // Snapshot taken by the first presentation of a retained headless runtime.
+  // Tracked explicitly: a snapshot whose layout params were null must not be
+  // retaken from a later presentation's MATCH_PARENT geometry.
+  private boolean backgroundSnapshotTaken;
   @Nullable
   private ViewGroup.LayoutParams backgroundLayoutParams;
   @Nullable
@@ -51,6 +59,7 @@ public class FlutterWebView implements PlatformWebView {
 
   public FlutterWebView(final InAppWebViewFlutterPlugin plugin, final Context context, Object id,
                         HashMap<String, Object> params) {
+    this.plugin = plugin;
     DisplayListenerProxy displayListenerProxy = new DisplayListenerProxy();
     DisplayManager displayManager = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
     displayListenerProxy.onPreWebViewInitialization(displayManager);
@@ -97,11 +106,36 @@ public class FlutterWebView implements PlatformWebView {
     return pullToRefreshLayout != null ? pullToRefreshLayout : webView;
   }
 
+  /**
+   * The Activity view the headless runtime is hosted in when one exists: the
+   * first child of {@code android.R.id.content}, which is what
+   * {@code HeadlessInAppWebView#prepare} attaches to. Null without an Activity.
+   */
+  @Nullable
+  public static ViewGroup headlessHostView(@Nullable InAppWebViewFlutterPlugin plugin) {
+    if (plugin == null || plugin.activity == null) {
+      return null;
+    }
+    ViewGroup contentView = (ViewGroup) plugin.activity.findViewById(android.R.id.content);
+    if (contentView == null) {
+      return null;
+    }
+    View mainView = contentView.getChildAt(0);
+    return mainView instanceof ViewGroup ? (ViewGroup) mainView : null;
+  }
+
+  /** The hidden 1×1 geometry a headless runtime runs with (see HeadlessInAppWebView#prepare). */
+  @NonNull
+  private static ViewGroup.LayoutParams headlessLayoutParams() {
+    return new FrameLayout.LayoutParams(1, 1);
+  }
+
   /** Restores normal foreground semantics before any retained presentation. */
   public void prepareForPresentation() {
     View view = getView();
     if (view != null) {
-      if (restoreKeepAlwaysVisibleForChromiumOnRelease && backgroundLayoutParams == null) {
+      if (restoreKeepAlwaysVisibleForChromiumOnRelease && !backgroundSnapshotTaken) {
+        backgroundSnapshotTaken = true;
         backgroundLayoutParams = view.getLayoutParams();
         backgroundAlpha = view.getAlpha();
         ViewParent parent = view.getParent();
@@ -125,14 +159,17 @@ public class FlutterWebView implements PlatformWebView {
   private void prepareForBackgroundRuntime() {
     View view = getView();
     if (view != null) {
-      final ViewGroup.LayoutParams retainedLayoutParams = backgroundLayoutParams;
-      if (retainedLayoutParams != null) {
-        view.setLayoutParams(backgroundLayoutParams);
-      }
+      // A runtime that never had layout params (created windowless) must not
+      // keep the presenter's MATCH_PARENT geometry: a full-screen alpha=0 view
+      // reattached to the Activity would still swallow touches.
+      final ViewGroup.LayoutParams retainedLayoutParams =
+              backgroundLayoutParams != null ? backgroundLayoutParams : headlessLayoutParams();
+      view.setLayoutParams(retainedLayoutParams);
       view.setVisibility(View.VISIBLE);
       view.setAlpha(backgroundAlpha != null ? backgroundAlpha : 0f);
       restoreBackgroundAttachment(view, retainedLayoutParams, true);
     }
+    backgroundSnapshotTaken = false;
     backgroundLayoutParams = null;
     backgroundAlpha = null;
     if (webView != null) {
@@ -142,11 +179,18 @@ public class FlutterWebView implements PlatformWebView {
 
   private void restoreBackgroundAttachment(
           @NonNull View view,
-          @Nullable ViewGroup.LayoutParams retainedLayoutParams,
+          @NonNull ViewGroup.LayoutParams retainedLayoutParams,
           boolean mayRetry
   ) {
+    // A headless runtime created by a background CDM / PendingIntent wake-up
+    // had no Activity and therefore no window to snapshot. Once the user has
+    // opened the App, the Activity exists: host the released runtime the same
+    // way HeadlessInAppWebView#prepare would have, so the always-visible hack
+    // is armed on an attached View instead of a windowless one.
     final ViewGroup retainedParent = backgroundParent;
-    if (retainedParent == null || view.getParent() == retainedParent) {
+    final ViewGroup target = retainedParent != null ? retainedParent : headlessHostView(plugin);
+    final int targetIndex = retainedParent != null ? backgroundParentIndex : 0;
+    if (target == null || view.getParent() == target) {
       backgroundParent = null;
       backgroundParentIndex = -1;
       return;
@@ -163,13 +207,8 @@ public class FlutterWebView implements PlatformWebView {
       }
       return;
     }
-    final int index = Math.max(0,
-            Math.min(backgroundParentIndex, retainedParent.getChildCount()));
-    if (retainedLayoutParams != null) {
-      retainedParent.addView(view, index, retainedLayoutParams);
-    } else {
-      retainedParent.addView(view, index);
-    }
+    final int index = Math.max(0, Math.min(targetIndex, target.getChildCount()));
+    target.addView(view, index, retainedLayoutParams);
     backgroundParent = null;
     backgroundParentIndex = -1;
   }

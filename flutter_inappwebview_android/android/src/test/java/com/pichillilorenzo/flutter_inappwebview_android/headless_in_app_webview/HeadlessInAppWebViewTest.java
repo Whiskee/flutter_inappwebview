@@ -1,5 +1,6 @@
 package com.pichillilorenzo.flutter_inappwebview_android.headless_in_app_webview;
 
+import android.app.Activity;
 import android.widget.FrameLayout;
 import android.view.ViewGroup;
 import com.pichillilorenzo.flutter_inappwebview_android.InAppWebViewFlutterPlugin;
@@ -99,5 +100,76 @@ public class HeadlessInAppWebViewTest {
 
     verify(headlessParent).addView(nativeView, 0, headlessLayout);
     verify(nativeView, never()).dispose();
+  }
+
+  private Activity activityHosting(ViewGroup mainView) {
+    Activity activity = mock(Activity.class);
+    ViewGroup content = mock(ViewGroup.class);
+    when(activity.findViewById(android.R.id.content)).thenReturn(content);
+    when(content.getChildAt(0)).thenReturn(mainView);
+    return activity;
+  }
+
+  @Test public void windowlessWakeUpRuntimeIsHostedByTheActivityThatAppearsLater() {
+    InAppWebViewFlutterPlugin plugin = plugin(); // No activity at wake-up.
+    FlutterWebView runtime = mock(FlutterWebView.class, CALLS_REAL_METHODS);
+    runtime.plugin = plugin;
+    InAppWebView nativeView = mock(InAppWebView.class);
+    FrameLayout.LayoutParams headlessLayout = new FrameLayout.LayoutParams(3, 5);
+    when(nativeView.getLayoutParams()).thenReturn(headlessLayout);
+    when(nativeView.getParent()).thenReturn(null); // never attached to a window
+    runtime.webView = nativeView;
+    HeadlessInAppWebView headless = new HeadlessInAppWebView(plugin, "A", runtime);
+    plugin.headlessInAppWebViewManager.webViews.put("A", headless);
+
+    ViewGroup mainView = mock(ViewGroup.class);
+    when(mainView.getChildCount()).thenReturn(1);
+    try (MockedConstruction<FrameLayout.LayoutParams> params =
+             mockConstruction(FrameLayout.LayoutParams.class)) {
+      FlutterWebView taken = headless.disposeAndGetFlutterWebView();
+      taken.keepAliveId = "A";
+      plugin.inAppWebViewManager.keepAliveWebViews.put("A", taken);
+      // The user opened the App while the runtime was presented.
+      plugin.activity = activityHosting(mainView);
+      taken.dispose();
+    }
+    // Released back to the background with a window this time, behind Flutter.
+    verify(mainView).addView(nativeView, 0, headlessLayout);
+    verify(nativeView).setKeepAlwaysVisibleForChromium(true);
+    verify(nativeView, never()).dispose();
+  }
+
+  @Test public void runtimeWithoutLayoutSnapshotIsReleasedWithHeadlessGeometry() {
+    InAppWebViewFlutterPlugin plugin = plugin();
+    FlutterWebView runtime = mock(FlutterWebView.class, CALLS_REAL_METHODS);
+    runtime.plugin = plugin;
+    InAppWebView nativeView = mock(InAppWebView.class);
+    when(nativeView.getLayoutParams()).thenReturn(null); // nothing to snapshot
+    when(nativeView.getParent()).thenReturn(null);
+    runtime.webView = nativeView;
+    HeadlessInAppWebView headless = new HeadlessInAppWebView(plugin, "A", runtime);
+    plugin.headlessInAppWebViewManager.webViews.put("A", headless);
+
+    ViewGroup mainView = mock(ViewGroup.class);
+    java.util.Map<FrameLayout.LayoutParams, java.util.List<?>> constructed = new java.util.HashMap<>();
+    try (MockedConstruction<FrameLayout.LayoutParams> params =
+             mockConstruction(FrameLayout.LayoutParams.class,
+                 (mock, context) -> constructed.put(mock, context.arguments()))) {
+      FlutterWebView taken = headless.disposeAndGetFlutterWebView();
+      taken.keepAliveId = "A";
+      plugin.inAppWebViewManager.keepAliveWebViews.put("A", taken);
+      plugin.activity = activityHosting(mainView);
+      taken.dispose();
+    }
+
+    // Never the presenter's MATCH_PARENT: a full-screen alpha=0 view would
+    // still receive touches in the foreground hierarchy.
+    ArgumentCaptor<ViewGroup.LayoutParams> released =
+        ArgumentCaptor.forClass(ViewGroup.LayoutParams.class);
+    verify(mainView).addView(eq(nativeView), eq(0), released.capture());
+    ViewGroup.LayoutParams geometry = released.getValue();
+    org.junit.Assert.assertEquals(java.util.Arrays.asList(1, 1), constructed.get(geometry));
+    verify(nativeView).setLayoutParams(geometry);
+    verify(nativeView).setAlpha(0f);
   }
 }

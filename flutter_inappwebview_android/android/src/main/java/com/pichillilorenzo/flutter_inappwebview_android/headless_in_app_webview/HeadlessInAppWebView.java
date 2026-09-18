@@ -77,18 +77,15 @@ public class HeadlessInAppWebView implements Disposable {
         view.setAlpha(0f);
       }
     }
-    if (plugin != null && plugin.activity != null) {
-      // Add the headless WebView to the view hierarchy.
-      // This way is also possible to take screenshots.
-      ViewGroup contentView = (ViewGroup) plugin.activity.findViewById(android.R.id.content);
-      if (contentView != null) {
-        ViewGroup mainView = (ViewGroup) (contentView).getChildAt(0);
-        if (mainView != null && flutterWebView != null) {
-          View view = flutterWebView.getView();
-          if (view != null) {
-            mainView.addView(view, 0);
-          }
-        }
+    // Add the headless WebView to the view hierarchy when an Activity exists.
+    // This way is also possible to take screenshots. A background wake-up has
+    // no Activity here; FlutterWebView attaches the runtime to the Activity
+    // that shows up later, when its first presenter releases it.
+    ViewGroup mainView = FlutterWebView.headlessHostView(plugin);
+    if (mainView != null && flutterWebView != null) {
+      View view = flutterWebView.getView();
+      if (view != null) {
+        mainView.addView(view, 0);
       }
     }
     // CHANGED FROM UPSTREAM: enable the always-visible-to-Chromium hack.
