@@ -6,6 +6,7 @@ import android.hardware.display.DisplayManager;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
@@ -44,6 +45,9 @@ public class FlutterWebView implements PlatformWebView {
   private ViewGroup.LayoutParams backgroundLayoutParams;
   @Nullable
   private Float backgroundAlpha;
+  @Nullable
+  private ViewGroup backgroundParent;
+  private int backgroundParentIndex = -1;
 
   public FlutterWebView(final InAppWebViewFlutterPlugin plugin, final Context context, Object id,
                         HashMap<String, Object> params) {
@@ -100,6 +104,11 @@ public class FlutterWebView implements PlatformWebView {
       if (restoreKeepAlwaysVisibleForChromiumOnRelease && backgroundLayoutParams == null) {
         backgroundLayoutParams = view.getLayoutParams();
         backgroundAlpha = view.getAlpha();
+        ViewParent parent = view.getParent();
+        if (parent instanceof ViewGroup) {
+          backgroundParent = (ViewGroup) parent;
+          backgroundParentIndex = backgroundParent.indexOfChild(view);
+        }
       }
       view.setLayoutParams(new FrameLayout.LayoutParams(
           ViewGroup.LayoutParams.MATCH_PARENT,
@@ -116,17 +125,53 @@ public class FlutterWebView implements PlatformWebView {
   private void prepareForBackgroundRuntime() {
     View view = getView();
     if (view != null) {
-      if (backgroundLayoutParams != null) {
+      final ViewGroup.LayoutParams retainedLayoutParams = backgroundLayoutParams;
+      if (retainedLayoutParams != null) {
         view.setLayoutParams(backgroundLayoutParams);
       }
       view.setVisibility(View.VISIBLE);
       view.setAlpha(backgroundAlpha != null ? backgroundAlpha : 0f);
+      restoreBackgroundAttachment(view, retainedLayoutParams, true);
     }
     backgroundLayoutParams = null;
     backgroundAlpha = null;
     if (webView != null) {
       webView.setKeepAlwaysVisibleForChromium(true);
     }
+  }
+
+  private void restoreBackgroundAttachment(
+          @NonNull View view,
+          @Nullable ViewGroup.LayoutParams retainedLayoutParams,
+          boolean mayRetry
+  ) {
+    final ViewGroup retainedParent = backgroundParent;
+    if (retainedParent == null || view.getParent() == retainedParent) {
+      backgroundParent = null;
+      backgroundParentIndex = -1;
+      return;
+    }
+    if (view.getParent() != null) {
+      // PlatformView disposal may detach its presentation container after this
+      // callback. Retry once on the UI queue without stealing from a live parent.
+      if (mayRetry) {
+        com.pichillilorenzo.flutter_inappwebview_android.WebViewStartupCoordinator.postOnMain(
+                () -> restoreBackgroundAttachment(view, retainedLayoutParams, false));
+      } else {
+        backgroundParent = null;
+        backgroundParentIndex = -1;
+      }
+      return;
+    }
+    final int index = Math.max(0,
+            Math.min(backgroundParentIndex, retainedParent.getChildCount()));
+    if (retainedLayoutParams != null) {
+      retainedParent.addView(view, index, retainedLayoutParams);
+    } else {
+      retainedParent.addView(view, index);
+    }
+    backgroundParent = null;
+    backgroundParentIndex = -1;
   }
 
   @SuppressLint("RestrictedApi")
@@ -186,6 +231,8 @@ public class FlutterWebView implements PlatformWebView {
   @Override
   public void dispose() {
     if (keepAliveId == null && webView != null) {
+      backgroundParent = null;
+      backgroundParentIndex = -1;
       webView.dispose();
       webView = null;
 

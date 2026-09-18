@@ -90,6 +90,11 @@ public final class WebViewStartupCoordinator {
                 }
               }
       );
+    } catch (UnsupportedOperationException unsupported) {
+      // Async startup is an optional AndroidX WebKit capability. Its absence
+      // means callers should continue through the normal synchronous WebView
+      // construction path, not fail the owning headless runtime.
+      complete(null);
     } catch (RuntimeException error) {
       complete(error);
     }

@@ -630,6 +630,22 @@ public class InitialJavaScriptBridgeTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  public void unsupportedAsyncStartupFallsBackToSynchronousWebViewStartup() {
+    compat.when(() -> WebViewCompat.startUpWebView(
+            any(), any(), any(WebViewOutcomeReceiver.class)))
+            .thenThrow(new UnsupportedOperationException("unsupported fixture"));
+    WebViewStartupCoordinator.Callback callback =
+            mock(WebViewStartupCoordinator.Callback.class);
+
+    WebViewStartupCoordinator.ensureStarted(plugin.applicationContext, callback);
+    shadowOf(Looper.getMainLooper()).idle();
+
+    verify(callback).onSuccess();
+    verify(callback, never()).onError(any());
+  }
+
+  @Test
   public void headlessInitialUserScriptsFollowBridge() {
     addInitialUserScript("window.flutter_inappwebview.callHandler('initial-user-1');");
     addInitialUserScript("window.flutter_inappwebview.callHandler('initial-user-2');");
