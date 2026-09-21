@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -346,8 +348,12 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
       viewType: 'com.pichillilorenzo/flutter_inappwebview',
       surfaceFactory:
           (BuildContext context, PlatformViewController controller) {
+            final androidController =
+                controller is _CreateErrorReportingPlatformViewController
+                ? controller.androidController
+                : controller as AndroidViewController;
             return AndroidViewSurface(
-              controller: controller as AndroidViewController,
+              controller: androidController,
               gestureRecognizers:
                   params.gestureRecognizers ??
                   const <Factory<OneSequenceGestureRecognizer>>{},
@@ -360,58 +366,65 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
           _attachStarted = true;
           this.params.onAttachStart?.call();
         }
-        final controller = _createAndroidViewController(
-            hybridComposition: useHybridComposition,
-            id: params.id,
-            viewType: 'com.pichillilorenzo/flutter_inappwebview',
-            layoutDirection:
-                this.params.layoutDirection ??
-                Directionality.maybeOf(context) ??
-                TextDirection.rtl,
-            creationParams: <String, dynamic>{
-              'initialUrlRequest': this.params.initialUrlRequest?.toMap(),
-              'initialFile': this.params.initialFile,
-              'initialData': this.params.initialData?.toMap(),
-              'initialSettings': settingsMap,
-              'contextMenu': this.params.contextMenu?.toMap() ?? {},
-              'windowId': this.params.windowId,
-              'headlessWebViewId':
-                  this.params.headlessWebView?.isRunning() ?? false
-                  ? this.params.headlessWebView?.id
-                  : null,
-              'initialUserScripts':
-                  this.params.initialUserScripts
-                      ?.map((e) => e.toMap())
-                      .toList() ??
-                  [],
-              'pullToRefreshSettings': pullToRefreshSettings,
-              'keepAliveId': this.params.keepAlive?.id,
-              'attachOnly': this.params.attachOnly,
-            },
-          )
-          ..addOnPlatformViewCreatedListener(params.onPlatformViewCreated)
-          ..addOnPlatformViewCreatedListener((id) => _onPlatformViewCreated(id));
-        // PlatformViewLink discards this future, so a create that never lands
-        // would otherwise escape as an unhandled asynchronous error that no
-        // host can intercept. Report it as a handled framework error instead.
-        controller.create().catchError((Object error, StackTrace stack) {
-          // onAttachStart already told the runtime owner a transfer was in
-          // flight. Without a create there is no isAttached acknowledgement to
-          // come, so the outcome is lost, not an authoritative native miss.
-          if (strict) {
-            _reportAttachResult(null);
-          }
-          FlutterError.reportError(
-            FlutterErrorDetails(
-              exception: error,
-              stack: stack,
-              library: 'flutter_inappwebview_android',
-              context: ErrorDescription(
-                'while creating the WebView platform view',
+        final androidController =
+            _createAndroidViewController(
+                hybridComposition: useHybridComposition,
+                id: params.id,
+                viewType: 'com.pichillilorenzo/flutter_inappwebview',
+                layoutDirection:
+                    this.params.layoutDirection ??
+                    Directionality.maybeOf(context) ??
+                    TextDirection.rtl,
+                creationParams: <String, dynamic>{
+                  'initialUrlRequest': this.params.initialUrlRequest?.toMap(),
+                  'initialFile': this.params.initialFile,
+                  'initialData': this.params.initialData?.toMap(),
+                  'initialSettings': settingsMap,
+                  'contextMenu': this.params.contextMenu?.toMap() ?? {},
+                  'windowId': this.params.windowId,
+                  'headlessWebViewId':
+                      this.params.headlessWebView?.isRunning() ?? false
+                      ? this.params.headlessWebView?.id
+                      : null,
+                  'initialUserScripts':
+                      this.params.initialUserScripts
+                          ?.map((e) => e.toMap())
+                          .toList() ??
+                      [],
+                  'pullToRefreshSettings': pullToRefreshSettings,
+                  'keepAliveId': this.params.keepAlive?.id,
+                  'attachOnly': this.params.attachOnly,
+                },
+              )
+              ..addOnPlatformViewCreatedListener(params.onPlatformViewCreated)
+              ..addOnPlatformViewCreatedListener(
+                (id) => _onPlatformViewCreated(id),
+              );
+        final controller = _CreateErrorReportingPlatformViewController(
+          androidController,
+          (Object error, StackTrace stack) {
+            // onAttachStart already told the runtime owner a transfer was in
+            // flight. Without a create there is no isAttached acknowledgement
+            // to come, so the outcome is lost, not an authoritative native
+            // miss.
+            if (strict) {
+              _reportAttachResult(null);
+            }
+            FlutterError.reportError(
+              FlutterErrorDetails(
+                exception: error,
+                stack: stack,
+                library: 'flutter_inappwebview_android',
+                context: ErrorDescription(
+                  'while creating the WebView platform view',
+                ),
               ),
-            ),
-          );
-        });
+            );
+          },
+        );
+        // PlatformViewLink discards the create future. The wrapper handles both
+        // this immediate call and the size-triggered call used by surface mode.
+        unawaited(controller.create());
         return controller;
       },
     );
@@ -560,4 +573,40 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
     // unused
     throw UnimplementedError();
   }
+}
+
+class _CreateErrorReportingPlatformViewController
+    implements PlatformViewController {
+  _CreateErrorReportingPlatformViewController(
+    this.androidController,
+    this._onCreateError,
+  );
+
+  final AndroidViewController androidController;
+  final void Function(Object error, StackTrace stack) _onCreateError;
+
+  @override
+  bool get awaitingCreation => androidController.awaitingCreation;
+
+  @override
+  Future<void> clearFocus() => androidController.clearFocus();
+
+  @override
+  Future<void> create({Size? size, Offset? position}) async {
+    try {
+      await androidController.create(size: size, position: position);
+    } catch (error, stack) {
+      _onCreateError(error, stack);
+    }
+  }
+
+  @override
+  Future<void> dispatchPointerEvent(PointerEvent event) =>
+      androidController.dispatchPointerEvent(event);
+
+  @override
+  Future<void> dispose() => androidController.dispose();
+
+  @override
+  int get viewId => androidController.viewId;
 }

@@ -307,6 +307,51 @@ void main() {
     expect(outcomes, [null]);
     messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);
   });
+  testWidgets(
+    'a deferred non-hybrid create failure still hands back an outcome',
+    (tester) async {
+      AndroidInAppWebViewPlatform.registerWith();
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final outcomes = <bool?>[];
+      var submitted = 0;
+      var ready = 0;
+      messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
+        call,
+      ) async {
+        if (call.method == 'create') {
+          throw PlatformException(code: 'platform_view_create_failed');
+        }
+        return null;
+      });
+      final view = AndroidInAppWebViewWidget(
+        PlatformInAppWebViewWidgetCreationParams(
+          attachOnly: true,
+          keepAlive: InAppWebViewKeepAlive(),
+          initialSettings: InAppWebViewSettings(useHybridComposition: false),
+          onAttachStart: () => submitted++,
+          onAttachResult: outcomes.add,
+          onWebViewCreated: (_) => ready++,
+        ),
+      );
+      await tester.pumpWidget(MaterialApp(home: Builder(builder: view.build)));
+      await tester.pump();
+      expect(submitted, 1);
+      expect(
+        outcomes,
+        [null],
+        reason:
+            'the size-triggered create must report the same unknown outcome '
+            'as an immediate hybrid create failure',
+      );
+      expect(ready, 0);
+      expect(tester.takeException(), isA<PlatformException>());
+      view.dispose();
+      await tester.pumpWidget(const SizedBox());
+      expect(outcomes, [null]);
+      messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);
+    },
+  );
   testWidgets('an ordinary create failure reports no attachment outcome', (
     tester,
   ) async {
