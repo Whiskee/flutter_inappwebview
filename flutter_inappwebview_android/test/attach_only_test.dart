@@ -216,6 +216,7 @@ void main() {
             TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
         final reply = Completer<bool>();
         final outcomes = <bool?>[];
+        final keepAlive = InAppWebViewKeepAlive();
         var submitted = 0;
         var ready = 0;
         messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
@@ -235,7 +236,7 @@ void main() {
         final view = AndroidInAppWebViewWidget(
           PlatformInAppWebViewWidgetCreationParams(
             attachOnly: true,
-            keepAlive: InAppWebViewKeepAlive(),
+            keepAlive: keepAlive,
             initialSettings: InAppWebViewSettings(useHybridComposition: true),
             onAttachStart: () => submitted++,
             onAttachResult: outcomes.add,
@@ -257,6 +258,16 @@ void main() {
         await tester.pump();
         expect(outcomes, [if (detached) null else true]);
         expect(ready, detached ? 0 : 1);
+        // A reply that lands after the presentation is gone must not build an
+        // owner behind the host's back: it was already told the outcome was
+        // unknown and has drained the keep-alive side on that basis.
+        expect(
+          await _claimsRuntimeChannel(keepAlive.id),
+          !detached,
+          reason: detached
+              ? 'no controller may claim the runtime channel after disposal'
+              : 'the presented controller owns the runtime channel',
+        );
         if (!detached) view.dispose();
         await tester.pumpWidget(const SizedBox());
         messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);
@@ -436,6 +447,22 @@ void main() {
       messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);
     },
   );
+}
+
+/// Whether some controller has a method call handler installed on the runtime
+/// channel for [id]. An installed handler answers an unknown method by
+/// throwing UnimplementedError, which comes back as an error envelope; with no
+/// handler at all the reply is null.
+Future<bool> _claimsRuntimeChannel(String id) async {
+  const codec = StandardMethodCodec();
+  final result = Completer<bool>();
+  await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .handlePlatformMessage(
+        'com.pichillilorenzo/flutter_inappwebview_$id',
+        codec.encodeMethodCall(const MethodCall('__unclaimedProbe__')),
+        (reply) => result.complete(reply != null),
+      );
+  return result.future;
 }
 
 Future<dynamic> _probe(String id) async {
