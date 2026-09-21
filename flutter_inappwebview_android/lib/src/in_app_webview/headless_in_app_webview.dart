@@ -446,11 +446,24 @@ class AndroidHeadlessInAppWebView extends PlatformHeadlessInAppWebView
 
   @override
   Future<void> dispose() async {
-    if (!_running) {
+    // `_started` rather than `_running`: native registers the instance and
+    // its channel before `run` can fail (prepare / initial load), so a run
+    // whose acknowledgement never arrived may still own a native WebView.
+    // Releasing by the original id is the only proof that it no longer does;
+    // an instance native never created answers with MissingPluginException.
+    if (!_started) {
       return;
     }
     Map<String, dynamic> args = <String, dynamic>{};
-    await channel?.invokeMethod('dispose', args);
+    try {
+      await channel?.invokeMethod('dispose', args);
+    } on MissingPluginException {
+      // A strict native attach consumes the headless channel before Dart's
+      // platform-view callback can acknowledge the transfer, and a run that
+      // failed before native registration has no handler either. In both
+      // states the missing handler is cleanup evidence, not an unresolved
+      // owner.
+    }
     disposeChannel();
     _started = false;
     _running = false;

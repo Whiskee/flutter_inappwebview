@@ -45,6 +45,7 @@ android {
     }
     testOptions {
         unitTests.includeAndroidResources = true
+        unitTests.returnDefaultValues = true
     }
     buildTypes {
         debug {
@@ -58,6 +59,8 @@ android {
     }
     dependencies {
         implementation 'androidx.webkit:webkit:1.16.0'
+        testImplementation 'junit:junit:4.13.2'
+        testImplementation 'org.mockito:mockito-core:5.4.0'
         implementation 'androidx.browser:browser:1.9.0'
         implementation 'androidx.appcompat:appcompat:1.7.1'
         implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.2.0'

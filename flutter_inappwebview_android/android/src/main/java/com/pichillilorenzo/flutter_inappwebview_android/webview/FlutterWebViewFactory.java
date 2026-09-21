@@ -12,6 +12,7 @@ import com.pichillilorenzo.flutter_inappwebview_android.webview.in_app_webview.F
 import java.util.HashMap;
 
 import io.flutter.plugin.common.StandardMessageCodec;
+import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.platform.PlatformView;
 import io.flutter.plugin.platform.PlatformViewFactory;
 
@@ -32,6 +33,31 @@ public class FlutterWebViewFactory extends PlatformViewFactory {
 
     String keepAliveId = (String) params.get("keepAliveId");
     String headlessWebViewId = (String) params.get("headlessWebViewId");
+    boolean attachOnly = Boolean.TRUE.equals(params.get("attachOnly"));
+
+    // Strict requests have exactly one source; never borrow a different keep-alive
+    // if a requested headless owner has already gone or been taken.
+    if (attachOnly) {
+      FlutterWebView target = null;
+      if (headlessWebViewId != null) {
+        HeadlessInAppWebView headless = plugin.headlessInAppWebViewManager == null ? null :
+            plugin.headlessInAppWebViewManager.webViews.get(headlessWebViewId);
+        // A retention key is required, not optional: the takeover below moves the
+        // WebView out of its headless owner, and without a keep-alive entry
+        // nothing holds it afterwards, so this presenter's disposal would destroy
+        // a live background WebView it was only asked to display. Refusing keeps
+        // the headless runtime untouched and reports an authoritative miss.
+        if (headless != null && headlessWebViewId.equals(keepAliveId)) {
+          target = headless.flutterWebView;
+        }
+      } else if (keepAliveId != null && plugin.inAppWebViewManager != null) {
+        target = plugin.inAppWebViewManager.keepAliveWebViews.get(keepAliveId);
+        if (target != null && !keepAliveId.equals(target.keepAliveId)) target = null;
+      }
+      if (target == null || target.webView == null || target.attachOnlyClaimed) {
+        return new AttachmentPlatformView(context, id, null);
+      }
+    }
 
     HeadlessInAppWebViewManager headlessInAppWebViewManager = plugin.headlessInAppWebViewManager;
     if (headlessWebViewId != null && headlessInAppWebViewManager != null) {
@@ -48,6 +74,7 @@ public class FlutterWebViewFactory extends PlatformViewFactory {
     if (keepAliveId != null && flutterWebView == null && inAppWebViewManager != null) {
       flutterWebView = inAppWebViewManager.keepAliveWebViews.get(keepAliveId);
       if (flutterWebView != null) {
+        flutterWebView.prepareForPresentation();
         // be sure to remove the view from the previous parent.
         View view = flutterWebView.getView();
         if (view != null) {
@@ -75,7 +102,59 @@ public class FlutterWebViewFactory extends PlatformViewFactory {
       flutterWebView.makeInitialLoad(params);
     }
     
-    return flutterWebView;
+    return attachOnly ? new AttachmentPlatformView(context, id, flutterWebView) : flutterWebView;
+  }
+
+  /** Per-platform-view pull handshake: creation can precede the Dart listener. */
+  private final class AttachmentPlatformView implements PlatformView {
+    private final FlutterWebView delegate;
+    private final View unavailableView;
+    private final MethodChannel channel;
+    private boolean disposed;
+
+    AttachmentPlatformView(Context context, int id, FlutterWebView delegate) {
+      this.delegate = delegate;
+      unavailableView = delegate == null ? new View(context) : null;
+      if (delegate != null) delegate.attachOnlyClaimed = true;
+      channel = new MethodChannel(plugin.messenger,
+          "com.pichillilorenzo/flutter_inappwebview_attach_" + id);
+      channel.setMethodCallHandler((call, result) -> {
+        if ("isAttached".equals(call.method)) {
+          result.success(!disposed && delegate != null && delegate.webView != null);
+        } else {
+          result.notImplemented();
+        }
+      });
+    }
+
+    @Override public View getView() {
+      return delegate == null ? unavailableView : delegate.getView();
+    }
+
+    @Override public void onFlutterViewAttached(View flutterView) {
+      if (delegate != null) delegate.onFlutterViewAttached(flutterView);
+    }
+
+    @Override public void onFlutterViewDetached() {
+      if (delegate != null) delegate.onFlutterViewDetached();
+    }
+
+    @Override public void onInputConnectionLocked() {
+      if (delegate != null) delegate.onInputConnectionLocked();
+    }
+
+    @Override public void onInputConnectionUnlocked() {
+      if (delegate != null) delegate.onInputConnectionUnlocked();
+    }
+
+    @Override public void dispose() {
+      if (disposed) return;
+      disposed = true;
+      channel.setMethodCallHandler(null);
+      if (delegate != null) {
+        delegate.attachOnlyClaimed = false;
+        delegate.dispose();
+      }
+    }
   }
 }
-

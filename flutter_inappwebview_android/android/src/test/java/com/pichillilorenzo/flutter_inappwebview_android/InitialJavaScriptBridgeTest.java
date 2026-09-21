@@ -96,7 +96,6 @@ public class InitialJavaScriptBridgeTest {
     Object startupState = ReflectionHelpers.getStaticField(WebViewStartupCoordinator.class, "state");
     ReflectionHelpers.setStaticField(WebViewStartupCoordinator.class, "state",
             startupState.getClass().getEnumConstants()[0]);
-    ReflectionHelpers.setStaticField(WebViewStartupCoordinator.class, "startupError", null);
     List<?> pendingStartup = ReflectionHelpers.getStaticField(WebViewStartupCoordinator.class, "PENDING_CALLBACKS");
     pendingStartup.clear();
     features = mockStatic(WebViewFeature.class);
@@ -601,6 +600,49 @@ public class InitialJavaScriptBridgeTest {
     startup.get(0).onResult(mock(WebViewStartUpResult.class));
     shadowOf(Looper.getMainLooper()).idle();
     assertEquals(URL, shadowOf(webView).getLastLoadedUrl());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void aTransientWebViewStartupFailureCanBeRetried() {
+    List<WebViewOutcomeReceiver<WebViewStartUpResult, WebViewStartupException>> startup =
+            new ArrayList<>();
+    compat.when(() -> WebViewCompat.startUpWebView(
+            any(), any(), any(WebViewOutcomeReceiver.class))).thenAnswer(invocation -> {
+      startup.add(invocation.getArgument(2));
+      return null;
+    });
+    WebViewStartupCoordinator.Callback first = mock(WebViewStartupCoordinator.Callback.class);
+    WebViewStartupCoordinator.Callback second = mock(WebViewStartupCoordinator.Callback.class);
+
+    WebViewStartupCoordinator.ensureStarted(plugin.applicationContext, first);
+    assertEquals(1, startup.size());
+    startup.get(0).onError(mock(WebViewStartupException.class));
+    shadowOf(Looper.getMainLooper()).idle();
+    verify(first).onError(any());
+
+    WebViewStartupCoordinator.ensureStarted(plugin.applicationContext, second);
+    assertEquals("a later owner must receive a fresh startup attempt", 2, startup.size());
+    startup.get(1).onResult(mock(WebViewStartUpResult.class));
+    shadowOf(Looper.getMainLooper()).idle();
+    verify(second).onSuccess();
+    verify(second, never()).onError(any());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void unsupportedAsyncStartupFallsBackToSynchronousWebViewStartup() {
+    compat.when(() -> WebViewCompat.startUpWebView(
+            any(), any(), any(WebViewOutcomeReceiver.class)))
+            .thenThrow(new UnsupportedOperationException("unsupported fixture"));
+    WebViewStartupCoordinator.Callback callback =
+            mock(WebViewStartupCoordinator.Callback.class);
+
+    WebViewStartupCoordinator.ensureStarted(plugin.applicationContext, callback);
+    shadowOf(Looper.getMainLooper()).idle();
+
+    verify(callback).onSuccess();
+    verify(callback, never()).onError(any());
   }
 
   @Test

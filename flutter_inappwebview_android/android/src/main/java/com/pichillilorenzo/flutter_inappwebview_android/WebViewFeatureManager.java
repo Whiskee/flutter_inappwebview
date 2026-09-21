@@ -32,6 +32,8 @@ public class WebViewFeatureManager extends ChannelDelegateImpl {
         if (plugin != null && plugin.activity != null) {
           String startupFeature = (String) call.argument("startupFeature");
           result.success(WebViewFeature.isStartupFeatureSupported(plugin.activity, startupFeature));
+        } else {
+          result.error(LOG_TAG, "Activity is unavailable", null);
         }
         break;
       case "startUpWebView":
