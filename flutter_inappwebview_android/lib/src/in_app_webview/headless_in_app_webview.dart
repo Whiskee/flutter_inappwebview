@@ -258,6 +258,7 @@ class AndroidHeadlessInAppWebView extends PlatformHeadlessInAppWebView
 
   bool _started = false;
   bool _running = false;
+  bool _retired = false;
 
   static const MethodChannel _sharedChannel = const MethodChannel(
     'com.pichillilorenzo/flutter_headless_inappwebview',
@@ -325,7 +326,13 @@ class AndroidHeadlessInAppWebView extends PlatformHeadlessInAppWebView
   }
 
   Future<void> run() async {
-    if (_started) {
+    // `_retired` as well as `_started`: a platform view that took this
+    // runtime over cleared `_started`, which would otherwise make this
+    // re-entrant. `id` is fixed for the lifetime of the instance, so a second
+    // run cannot get a runtime of its own - it would build another controller
+    // on `flutter_inappwebview_<id>` and displace the handler belonging to
+    // the presentation that now owns it.
+    if (_started || _retired) {
       return;
     }
     _started = true;
@@ -476,8 +483,31 @@ class AndroidHeadlessInAppWebView extends PlatformHeadlessInAppWebView
 }
 
 extension InternalHeadlessInAppWebView on AndroidHeadlessInAppWebView {
+  /// Retires this instance because a platform view has taken its runtime over.
+  ///
+  /// Retirement has to leave the instance inert on *every* route that can
+  /// reach `flutter_inappwebview_<id>`, because the presentation now shares
+  /// that channel: whatever unregisters its handler leaves the presented
+  /// bridge mute, whoever does it.
+  ///
+  /// - `dispose()` is neutralised by clearing `_started`, which stops it
+  ///   before `_webViewController?.dispose()`.
+  /// - `run()` is neutralised by `_retired`, because clearing `_started`
+  ///   would otherwise re-arm it.
+  /// - [AndroidHeadlessInAppWebView.webViewController] is a public getter, so
+  ///   dropping the reference stops it handing the transferred controller to
+  ///   a host that would dispose it directly.
+  ///
+  /// The controller itself is deliberately *not* disposed: that is the one
+  /// action that would unregister the shared handler.
+  ///
+  /// A reference a host captured before the handover is still its own to
+  /// dispose; nothing here can reach that.
   Future<void> internalDispose() async {
     _started = false;
     _running = false;
+    _retired = true;
+    _webViewController = null;
+    _controllerFromPlatform = null;
   }
 }

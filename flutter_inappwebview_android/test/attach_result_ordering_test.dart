@@ -8,29 +8,59 @@ import 'package:flutter_inappwebview_android/flutter_inappwebview_android.dart';
 import 'package:flutter_inappwebview_platform_interface/flutter_inappwebview_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Where the runtime owner releases the headless side it just handed over.
+/// What the runtime owner does with the headless side it just handed over,
+/// and from which callback.
 ///
-/// Both are inside the documented contract: onAttachResult is "delivered
-/// before ordinary onWebViewCreated"
-/// (`platform_inappwebview_widget.dart:235-238`), so a host is entitled to act
-/// on a successful acknowledgement in either callback.
-enum _Release { inAttachResult, inWebViewCreated, never, widgetInAttachResult }
+/// Acting on a successful acknowledgement is inside the documented contract:
+/// onAttachResult is "delivered before ordinary onWebViewCreated"
+/// (`platform_inappwebview_widget.dart:235-238`).
+///
+/// The three `*InAttachResult` release shapes are every route a retired
+/// instance still offers to the channel `flutter_inappwebview_<runtime id>`,
+/// which the presentation now shares with it. They must all be inert.
+enum _Release {
+  /// The documented release.
+  disposeInAttachResult,
 
-/// How faithfully the mock answers `isAttached`.
+  /// `webViewController` is a public getter on PlatformHeadlessInAppWebView.
+  controllerInAttachResult,
+
+  /// `run()` gates re-entry on `_started`, which retirement clears.
+  rerunInAttachResult,
+
+  /// The same documented release, one callback later.
+  disposeInWebViewCreated,
+
+  /// The host tears the presentation down instead of the headless side.
+  widgetInAttachResult,
+
+  never,
+}
+
+/// How the mock answers `isAttached`.
 ///
-/// [nativeGate] replicates the real refusal in
-/// `android/src/main/java/.../webview/FlutterWebViewFactory.java:40-59`: a
-/// strict headless takeover is granted only when the requested headless id is
-/// also the retention key. Keeping the fixture on that gate is what stops this
-/// suite from proving something about a configuration native rejects.
+/// [nativeGate] models exactly one clause of the real gate in
+/// `android/src/main/java/.../webview/FlutterWebViewFactory.java:40-59` - that
+/// a strict headless takeover needs the requested headless id to also be the
+/// retention key. Production additionally requires the headless instance to
+/// exist, `target.webView != null`, `!target.attachOnlyClaimed`, and on the
+/// keep-alive branch `keepAliveId.equals(target.keepAliveId)`. The fixture is
+/// therefore *more permissive* than native, which is the harmless direction
+/// here: it grants takeovers native would refuse, so no test below can pass
+/// only because the fixture refused something.
 enum _Fixture { nativeGate, alwaysTrue }
 
 void main() {
-  // The reviewed pair. Same handover, same host action, only the callback it
-  // runs in differs.
-  for (final release in [_Release.inWebViewCreated, _Release.inAttachResult]) {
+  // The reviewed pair, widened to every release route a retired instance
+  // still exposes. Same handover, same outcome required.
+  for (final release in [
+    _Release.disposeInWebViewCreated,
+    _Release.disposeInAttachResult,
+    _Release.controllerInAttachResult,
+    _Release.rerunInAttachResult,
+  ]) {
     testWidgets(
-      'a headless release in ${release.name} keeps the new bridge reachable',
+      'a headless release via ${release.name} keeps the new bridge reachable',
       (tester) async {
         final probe = await _handover(tester, release: release);
         expect(probe.outcomes, [true]);
@@ -40,32 +70,22 @@ void main() {
           probe.submitted!['keepAliveId'],
           reason: 'the new owner binds the transferred runtime id',
         );
+        // '"old"' would mean the presented controller never claimed the
+        // channel; null would mean something unregistered its handler.
         expect(
           probe.probed,
           '"new"',
           reason:
               'the controller handed to onWebViewCreated must stay reachable '
-              'on the transferred runtime id, whichever callback released the '
-              'headless owner',
+              'on the transferred runtime id, whatever the runtime owner did '
+              'with the headless instance it handed over',
         );
-        // The mechanism behind that symptom: AndroidHeadlessInAppWebView
-        // .dispose() early-returns on `!_started`, and the handover clears
-        // `_started` through internalDispose(). A release that still reaches
-        // native is a release that also ran `_webViewController?.dispose()`,
-        // which unregisters the method call handler on
-        // `flutter_inappwebview_<runtime id>` - the channel the new owner
-        // shares with the headless owner it replaced.
-        expect(
-          probe.headlessNativeDisposes,
-          0,
-          reason:
-              'the handover retires the headless owner before acknowledging '
-              'it, so the host release is the no-op it is in onWebViewCreated',
-        );
-        // Recoverability of the new terminal state: the runtime is retired on
-        // the headless side and live on the presented side, not both or
-        // neither.
+        // Recoverability of the terminal state: the runtime is retired on the
+        // headless side and live on the presented side, not both or neither.
         expect(probe.headlessRunning, isFalse);
+        // A retired instance must not reach native either: the runtime it
+        // would be releasing is no longer its own.
+        expect(probe.headlessNativeDisposes, 0);
       },
     );
   }
@@ -86,7 +106,8 @@ void main() {
   // Establishing the owner before acknowledging means the acknowledgement now
   // runs with a controller already published on the field, so a host that
   // tears the presentation down inside the receipt must not then be handed
-  // that controller.
+  // that controller - and must be left with the same ownership an ordinary
+  // teardown leaves.
   testWidgets('a teardown inside the receipt withholds the ready callback', (
     tester,
   ) async {
@@ -103,6 +124,20 @@ void main() {
           'controller',
     );
     expect(probe.order, ['attachResult']);
+    // Terminal ownership, and the reason this acknowledgement sits after the
+    // controller construction rather than before it. Native has already
+    // handed the runtime to the platform view, so the headless instance must
+    // not still be the one answering for it: '"old"' here would mean the
+    // handover was acknowledged while the runtime still belonged, on the Dart
+    // side, to an instance native had already given up.
+    expect(
+      probe.probed,
+      isNull,
+      reason:
+          'the runtime channel must be held by this widget/keep-alive '
+          'controller, not by the headless instance it replaced',
+    );
+    expect(probe.headlessRunning, isFalse);
   });
 
   testWidgets('an ordinary presentation reports no attachment outcome', (
@@ -110,7 +145,7 @@ void main() {
   ) async {
     final probe = await _handover(
       tester,
-      release: _Release.inWebViewCreated,
+      release: _Release.disposeInWebViewCreated,
       strict: false,
     );
     expect(
@@ -155,6 +190,11 @@ void main() {
       probe.headlessRunning,
       isTrue,
       reason: 'a refused takeover must leave the headless runtime untouched',
+    );
+    expect(
+      probe.probed,
+      '"old"',
+      reason: 'and must leave its bridge answering',
     );
   });
 }
@@ -211,6 +251,12 @@ Future<_Probe> _handover(
       return null;
     },
   );
+  // The pre-handover bridge. Registering it is what lets a probe tell "the
+  // presented controller owns the channel" ('"new"') from "the headless
+  // instance still owns it" ('"old"') from "nobody does" (null) - three
+  // states a bare null check collapses into one.
+  (headless.webViewController as PlatformInAppWebViewController?)
+      ?.addJavaScriptHandler(handlerName: 'probe', callback: (_) => 'old');
 
   final outcomes = <bool?>[];
   final order = <String>[];
@@ -260,11 +306,18 @@ Future<_Probe> _handover(
         order.add('attachResult');
         outcomes.add(attached);
         if (attached != true) return;
-        if (release == _Release.inAttachResult) {
-          unawaited(headless.dispose());
-        }
-        if (release == _Release.widgetInAttachResult) {
-          disposeInReceipt!();
+        switch (release) {
+          case _Release.disposeInAttachResult:
+            unawaited(headless.dispose());
+          case _Release.controllerInAttachResult:
+            headless.webViewController?.dispose();
+          case _Release.rerunInAttachResult:
+            unawaited(headless.run());
+          case _Release.widgetInAttachResult:
+            disposeInReceipt!();
+          case _Release.disposeInWebViewCreated:
+          case _Release.never:
+            break;
         }
       },
       onWebViewCreated: (controller) {
@@ -276,7 +329,7 @@ Future<_Probe> _handover(
           handlerName: 'probe',
           callback: (_) => 'new',
         );
-        if (release == _Release.inWebViewCreated) {
+        if (release == _Release.disposeInWebViewCreated) {
           unawaited(headless.dispose());
         }
       },

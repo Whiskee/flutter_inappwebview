@@ -98,6 +98,47 @@ void main() {
     },
   );
 
+  test('headless dispose takes its own bridge down with it', () async {
+    AndroidInAppWebViewPlatform.registerWith();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('com.pichillilorenzo/flutter_headless_inappwebview'),
+      (_) async => true,
+    );
+    final headless = AndroidHeadlessInAppWebView(
+      AndroidHeadlessInAppWebViewCreationParams(),
+    );
+    await headless.run();
+    messenger.setMockMethodCallHandler(
+      MethodChannel(
+        'com.pichillilorenzo/flutter_headless_inappwebview_${headless.id}',
+      ),
+      (_) async => null,
+    );
+    (headless.webViewController as PlatformInAppWebViewController?)
+        ?.addJavaScriptHandler(handlerName: 'probe', callback: (_) => 'alive');
+    expect(await _probe(headless.id), '"alive"');
+
+    await headless.dispose();
+
+    // An ordinary release - no platform view took this runtime over - has to
+    // unregister the controller's handler. This is the same step that must
+    // NOT run once the runtime has been handed over, so it needs an assertion
+    // of its own: without one, deleting it leaves both paths green and the
+    // handover regression tests lose the thing they are contrasted against.
+    expect(
+      await _probe(headless.id),
+      isNull,
+      reason: 'the released runtime must leave no bridge answering for its id',
+    );
+
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('com.pichillilorenzo/flutter_headless_inappwebview'),
+      null,
+    );
+  });
+
   for (final strict in [false, true]) {
     testWidgets('controller retention is opt-in: attachOnly=$strict', (
       tester,
