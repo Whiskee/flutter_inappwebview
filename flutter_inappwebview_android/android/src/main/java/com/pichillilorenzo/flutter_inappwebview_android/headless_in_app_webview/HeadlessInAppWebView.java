@@ -1,6 +1,5 @@
 package com.pichillilorenzo.flutter_inappwebview_android.headless_in_app_webview;
 
-import android.app.Activity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -178,21 +177,17 @@ public class HeadlessInAppWebView implements Disposable {
       if (headlessInAppWebViewManager != null && headlessInAppWebViewManager.webViews.containsKey(id)) {
         headlessInAppWebViewManager.webViews.put(id, null);
       }
-      Activity activity =  plugin.activity;
-      if (activity != null) {
-        ViewGroup contentView = plugin.activity.findViewById(android.R.id.content);
-        if (contentView != null) {
-          ViewGroup mainView = (ViewGroup) (contentView).getChildAt(0);
-          if (mainView != null && flutterWebView != null) {
-            View view = flutterWebView.getView();
-            if (view != null) {
-              mainView.removeView(flutterWebView.getView());
-            }
-          }
-        }
-      }
     }
     if (flutterWebView != null) {
+      View view = flutterWebView.getView();
+      // Detach from whichever parent actually holds the runtime rather than
+      // from the current Activity's view tree: a background CDM / PendingIntent
+      // wake-up may have been hosted by an Activity that is already gone, and
+      // removing it from today's Activity would silently do nothing and leave
+      // the View parented to a dead hierarchy.
+      if (view != null && view.getParent() instanceof ViewGroup) {
+        ((ViewGroup) view.getParent()).removeView(view);
+      }
       flutterWebView.dispose();
     }
     flutterWebView = null;

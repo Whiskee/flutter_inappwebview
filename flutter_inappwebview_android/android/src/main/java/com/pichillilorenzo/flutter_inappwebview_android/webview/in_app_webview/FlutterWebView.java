@@ -130,11 +130,24 @@ public class FlutterWebView implements PlatformWebView {
     return new FrameLayout.LayoutParams(1, 1);
   }
 
-  /** Restores normal foreground semantics before any retained presentation. */
+  /**
+   * Restores normal foreground semantics before a retained presentation.
+   *
+   * <p>Only a runtime released from headless execution needs this: it runs 1×1
+   * at alpha 0 with the anti-throttling hack armed, none of which a presenter
+   * can show. An ordinary keep-alive remount is already in whatever state its
+   * caller put it in, so every action below shares the one discriminator
+   * instead of some of them being unconditional — forcing MATCH_PARENT,
+   * VISIBLE and alpha 1 on a plain keep-alive silently undoes the caller's own
+   * setVisibility/setAlpha.
+   */
   public void prepareForPresentation() {
+    if (!restoreKeepAlwaysVisibleForChromiumOnRelease) {
+      return;
+    }
     View view = getView();
     if (view != null) {
-      if (restoreKeepAlwaysVisibleForChromiumOnRelease && !backgroundSnapshotTaken) {
+      if (!backgroundSnapshotTaken) {
         backgroundSnapshotTaken = true;
         backgroundLayoutParams = view.getLayoutParams();
         backgroundAlpha = view.getAlpha();
@@ -150,7 +163,7 @@ public class FlutterWebView implements PlatformWebView {
       view.setVisibility(View.VISIBLE);
       view.setAlpha(1f);
     }
-    if (restoreKeepAlwaysVisibleForChromiumOnRelease && webView != null) {
+    if (webView != null) {
       webView.setKeepAlwaysVisibleForChromium(false);
     }
   }
@@ -177,6 +190,28 @@ public class FlutterWebView implements PlatformWebView {
     }
   }
 
+  /**
+   * Whether a snapshotted parent can still host the released runtime.
+   *
+   * <p>The snapshot is taken by the first presentation and outlives it, while
+   * the release happens when the user opens the App — which is precisely when
+   * the Activity may have been replaced. A snapshot taken under the previous
+   * Activity then names a view tree that is no longer on screen.
+   */
+  private static boolean canHostRelease(
+          @NonNull ViewGroup retainedParent,
+          @Nullable ViewGroup currentHost
+  ) {
+    // A parent torn down with its Activity is no longer attached to a window;
+    // re-hosting there would leave the runtime windowless all over again.
+    if (!retainedParent.isAttachedToWindow()) {
+      return false;
+    }
+    // A live Activity always owns the headless host view, so a snapshot naming
+    // anything else belongs to the Activity that has since been replaced.
+    return currentHost == null || retainedParent == currentHost;
+  }
+
   private void restoreBackgroundAttachment(
           @NonNull View view,
           @NonNull ViewGroup.LayoutParams retainedLayoutParams,
@@ -187,8 +222,14 @@ public class FlutterWebView implements PlatformWebView {
     // opened the App, the Activity exists: host the released runtime the same
     // way HeadlessInAppWebView#prepare would have, so the always-visible hack
     // is armed on an attached View instead of a windowless one.
-    final ViewGroup retainedParent = backgroundParent;
-    final ViewGroup target = retainedParent != null ? retainedParent : headlessHostView(plugin);
+    final ViewGroup currentHost = headlessHostView(plugin);
+    ViewGroup retainedParent = backgroundParent;
+    if (retainedParent != null && !canHostRelease(retainedParent, currentHost)) {
+      // Opening the App is also the moment the Activity can change, so fall
+      // back to the Activity that is actually on screen now.
+      retainedParent = null;
+    }
+    final ViewGroup target = retainedParent != null ? retainedParent : currentHost;
     final int targetIndex = retainedParent != null ? backgroundParentIndex : 0;
     if (target == null || view.getParent() == target) {
       backgroundParent = null;

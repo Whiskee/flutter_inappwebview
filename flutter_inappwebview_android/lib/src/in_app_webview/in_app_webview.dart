@@ -355,11 +355,12 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
             );
           },
       onCreatePlatformView: (PlatformViewCreationParams params) {
-        if (this.params.attachOnly) {
+        final strict = this.params.attachOnly;
+        if (strict) {
           _attachStarted = true;
           this.params.onAttachStart?.call();
         }
-        return _createAndroidViewController(
+        final controller = _createAndroidViewController(
             hybridComposition: useHybridComposition,
             id: params.id,
             viewType: 'com.pichillilorenzo/flutter_inappwebview',
@@ -389,8 +390,29 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
             },
           )
           ..addOnPlatformViewCreatedListener(params.onPlatformViewCreated)
-          ..addOnPlatformViewCreatedListener((id) => _onPlatformViewCreated(id))
-          ..create();
+          ..addOnPlatformViewCreatedListener((id) => _onPlatformViewCreated(id));
+        // PlatformViewLink discards this future, so a create that never lands
+        // would otherwise escape as an unhandled asynchronous error that no
+        // host can intercept. Report it as a handled framework error instead.
+        controller.create().catchError((Object error, StackTrace stack) {
+          // onAttachStart already told the runtime owner a transfer was in
+          // flight. Without a create there is no isAttached acknowledgement to
+          // come, so the outcome is lost, not an authoritative native miss.
+          if (strict) {
+            _reportAttachResult(null);
+          }
+          FlutterError.reportError(
+            FlutterErrorDetails(
+              exception: error,
+              stack: stack,
+              library: 'flutter_inappwebview_android',
+              context: ErrorDescription(
+                'while creating the WebView platform view',
+              ),
+            ),
+          );
+        });
+        return controller;
       },
     );
   }

@@ -45,6 +45,8 @@ public class HeadlessInAppWebViewTest {
     FrameLayout.LayoutParams headlessLayout = new FrameLayout.LayoutParams(3, 5);
     when(nativeView.getLayoutParams()).thenReturn(headlessLayout);
     ViewGroup headlessParent = mock(ViewGroup.class);
+    // The Activity that hosts this parent is still up, so it can still host.
+    when(headlessParent.isAttachedToWindow()).thenReturn(true);
     when(nativeView.getParent()).thenReturn(headlessParent, headlessParent, null);
     when(headlessParent.indexOfChild(nativeView)).thenReturn(0);
     when(headlessParent.getChildCount()).thenReturn(0);
@@ -72,6 +74,8 @@ public class HeadlessInAppWebViewTest {
     FrameLayout.LayoutParams headlessLayout = new FrameLayout.LayoutParams(3, 5);
     when(nativeView.getLayoutParams()).thenReturn(headlessLayout);
     ViewGroup headlessParent = mock(ViewGroup.class);
+    // The Activity that hosts this parent is still up, so it can still host.
+    when(headlessParent.isAttachedToWindow()).thenReturn(true);
     ViewGroup presenterParent = mock(ViewGroup.class);
     when(nativeView.getParent()).thenReturn(
             headlessParent,
@@ -137,6 +141,29 @@ public class HeadlessInAppWebViewTest {
     verify(mainView).addView(nativeView, 0, headlessLayout);
     verify(nativeView).setKeepAlwaysVisibleForChromium(true);
     verify(nativeView, never()).dispose();
+  }
+
+  @Test public void headlessDisposeDetachesFromTheParentItIsActuallyIn() {
+    InAppWebViewFlutterPlugin plugin = plugin();
+    FlutterWebView runtime = mock(FlutterWebView.class, CALLS_REAL_METHODS);
+    runtime.plugin = plugin;
+    InAppWebView nativeView = mock(InAppWebView.class);
+    runtime.webView = nativeView;
+    // Hosted by the Activity that was up when the wake-up created it...
+    ViewGroup oldHost = mock(ViewGroup.class);
+    when(nativeView.getParent()).thenReturn(oldHost);
+    // ...but a different Activity is on screen by the time it is disposed.
+    ViewGroup currentHost = mock(ViewGroup.class);
+    plugin.activity = activityHosting(currentHost);
+    HeadlessInAppWebView headless = new HeadlessInAppWebView(plugin, "A", runtime);
+    plugin.headlessInAppWebViewManager.webViews.put("A", headless);
+
+    headless.dispose();
+
+    // Removing it from the current Activity's tree would silently do nothing
+    // and leave the View parented to a dead one.
+    verify(oldHost).removeView(nativeView);
+    verify(currentHost, never()).removeView(any());
   }
 
   @Test public void runtimeWithoutLayoutSnapshotIsReleasedWithHeadlessGeometry() {

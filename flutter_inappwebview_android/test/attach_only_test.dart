@@ -263,6 +263,86 @@ void main() {
       },
     );
   }
+  testWidgets('a platform create that never lands still hands back an outcome', (
+    tester,
+  ) async {
+    AndroidInAppWebViewPlatform.registerWith();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final outcomes = <bool?>[];
+    var submitted = 0;
+    var ready = 0;
+    messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
+      call,
+    ) async {
+      if (call.method == 'create') {
+        throw PlatformException(code: 'platform_view_create_failed');
+      }
+      return null;
+    });
+    final view = AndroidInAppWebViewWidget(
+      PlatformInAppWebViewWidgetCreationParams(
+        attachOnly: true,
+        keepAlive: InAppWebViewKeepAlive(),
+        initialSettings: InAppWebViewSettings(useHybridComposition: true),
+        onAttachStart: () => submitted++,
+        onAttachResult: outcomes.add,
+        onWebViewCreated: (_) => ready++,
+      ),
+    );
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: view.build)));
+    await tester.pump();
+    expect(submitted, 1);
+    // onAttachStart already told the owner a transfer was in flight; a create
+    // that dies before any native acknowledgement leaves the result lost, so
+    // the owner has to hear "unknown" rather than nothing at all.
+    expect(outcomes, [null]);
+    expect(ready, 0);
+    // The failure stays visible, but as a handled framework error rather than
+    // an unhandled asynchronous one that no host could intercept.
+    expect(tester.takeException(), isA<PlatformException>());
+    view.dispose();
+    await tester.pumpWidget(const SizedBox());
+    // Disposal must not double-report on top of the outcome already delivered.
+    expect(outcomes, [null]);
+    messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);
+  });
+  testWidgets('an ordinary create failure reports no attachment outcome', (
+    tester,
+  ) async {
+    AndroidInAppWebViewPlatform.registerWith();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final outcomes = <bool?>[];
+    messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
+      call,
+    ) async {
+      if (call.method == 'create') {
+        throw PlatformException(code: 'platform_view_create_failed');
+      }
+      return null;
+    });
+    final view = AndroidInAppWebViewWidget(
+      PlatformInAppWebViewWidgetCreationParams(
+        attachOnly: false,
+        keepAlive: InAppWebViewKeepAlive(),
+        initialSettings: InAppWebViewSettings(useHybridComposition: true),
+        onAttachResult: outcomes.add,
+      ),
+    );
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: view.build)));
+    await tester.pump();
+    // Nothing was ever submitted as a strict transfer, so there is no
+    // attachment outcome to report; only attachOnly owes an acknowledgement.
+    expect(outcomes, isEmpty);
+    view.dispose();
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    expect(outcomes, isEmpty);
+    // The create failure is still surfaced, just without an attachment outcome.
+    expect(tester.takeException(), isA<PlatformException>());
+    messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);
+  });
   testWidgets(
     'native unavailable is observed without ordinary ready callback',
     (tester) async {
