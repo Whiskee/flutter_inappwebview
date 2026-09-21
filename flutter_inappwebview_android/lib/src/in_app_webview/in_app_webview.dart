@@ -491,22 +491,28 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
     if (strict) {
       // A successful acknowledgement is what licenses the runtime owner to
       // release the headless side it handed over, so it cannot be delivered
-      // until that side has been retired just above: internalDispose() clears
-      // `_started`, and that is the early return which keeps
+      // until that side has been retired just above. internalDispose() clears
+      // `_started`, which is the early return that keeps
       // AndroidHeadlessInAppWebView.dispose() off this runtime
-      // (headless_in_app_webview.dart:454). Acknowledging any earlier hands
+      // (headless_in_app_webview.dart:454); acknowledging any earlier hands
       // the owner a headless instance that still believes it owns the
-      // runtime, and its release runs `_webViewController?.dispose()`
-      // (headless_in_app_webview.dart:470), unregistering the method call
-      // handler on the very channel the controller above just claimed.
+      // runtime, so its release reaches `_webViewController?.dispose()`
+      // (:470) and unregisters the method call handler on the very channel
+      // the controller above just claimed.
       //
-      // Still ahead of ordinary onWebViewCreated, which is what
-      // onAttachResult documents. The invariant is about this call's position
-      // relative to the retirement and to onWebViewCreated, not to the
-      // controller construction: everything from the isAttached reply down to
-      // here is synchronous, so nothing in between is externally observable.
-      // An await added in that stretch would reopen the window this ordering
-      // closes.
+      // This ordering covers the documented release, `dispose()`, and nothing
+      // more. The runtime channel has other reachable ways to lose its
+      // handler - disposing `headless.webViewController` directly, or calling
+      // `run()` again on a retired instance - which predate this MR and are
+      // not fixed by where this call sits. See internalDispose().
+      //
+      // It must also stay ahead of ordinary onWebViewCreated, which is what
+      // onAttachResult documents. Position relative to the controller
+      // construction is load-bearing too: acknowledging afterwards means a
+      // host that tears the presentation down from inside the receipt leaves
+      // the same terminal ownership as an ordinary teardown, with the
+      // runtime channel held by this widget's controller rather than by the
+      // headless instance it replaced.
       _reportAttachResult(attached);
       if (_disposed) return;
     }
