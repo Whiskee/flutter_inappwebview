@@ -56,6 +56,9 @@ public class FlutterWebView implements PlatformWebView {
   @Nullable
   private ViewGroup backgroundParent;
   private int backgroundParentIndex = -1;
+  // Invalidates a queued background restore as soon as a newer presentation
+  // starts, including the brief interval before AttachmentPlatformView claims it.
+  private long presentationGeneration;
 
   public FlutterWebView(final InAppWebViewFlutterPlugin plugin, final Context context, Object id,
                         HashMap<String, Object> params) {
@@ -145,6 +148,7 @@ public class FlutterWebView implements PlatformWebView {
     if (!restoreKeepAlwaysVisibleForChromiumOnRelease) {
       return;
     }
+    presentationGeneration++;
     View view = getView();
     if (view != null) {
       if (!backgroundSnapshotTaken) {
@@ -177,10 +181,26 @@ public class FlutterWebView implements PlatformWebView {
       // reattached to the Activity would still swallow touches.
       final ViewGroup.LayoutParams retainedLayoutParams =
               backgroundLayoutParams != null ? backgroundLayoutParams : headlessLayoutParams();
+      final float retainedAlpha = backgroundAlpha != null ? backgroundAlpha : 0f;
+      final ViewGroup retainedParent = backgroundParent;
+      final int retainedParentIndex = backgroundParentIndex;
+      final long releaseGeneration = presentationGeneration;
       view.setLayoutParams(retainedLayoutParams);
       view.setVisibility(View.VISIBLE);
-      view.setAlpha(backgroundAlpha != null ? backgroundAlpha : 0f);
-      restoreBackgroundAttachment(view, retainedLayoutParams, true);
+      view.setAlpha(retainedAlpha);
+      restoreBackgroundAttachment(view, retainedLayoutParams);
+      // PlatformViewsController completes presentation teardown after
+      // PlatformView.dispose() returns. It can therefore re-apply the
+      // presenter's full-screen layout after the synchronous restore above.
+      // Reassert the retained runtime state once that call stack has drained.
+      com.pichillilorenzo.flutter_inappwebview_android.WebViewStartupCoordinator.postOnMain(
+              () -> stabilizeBackgroundRuntime(
+                      view,
+                      retainedLayoutParams,
+                      retainedAlpha,
+                      retainedParent,
+                      retainedParentIndex,
+                      releaseGeneration));
     }
     backgroundSnapshotTaken = false;
     backgroundLayoutParams = null;
@@ -188,6 +208,38 @@ public class FlutterWebView implements PlatformWebView {
     if (webView != null) {
       webView.setKeepAlwaysVisibleForChromium(true);
     }
+  }
+
+  private void stabilizeBackgroundRuntime(
+          @NonNull View retainedView,
+          @NonNull ViewGroup.LayoutParams retainedLayoutParams,
+          float retainedAlpha,
+          @Nullable ViewGroup retainedParent,
+          int retainedParentIndex,
+          long releaseGeneration
+  ) {
+    if (webView == null || getView() != retainedView ||
+            presentationGeneration != releaseGeneration) {
+      return;
+    }
+    retainedView.setLayoutParams(retainedLayoutParams);
+    retainedView.setVisibility(View.VISIBLE);
+    retainedView.setAlpha(retainedAlpha);
+
+    final ViewGroup currentHost = headlessHostView(plugin);
+    ViewGroup target = retainedParent;
+    if (target != null && !canHostRelease(target, currentHost)) {
+      target = null;
+    }
+    if (target == null) {
+      target = currentHost;
+      retainedParentIndex = 0;
+    }
+    if (target == null || retainedView.getParent() != null) {
+      return;
+    }
+    final int index = Math.max(0, Math.min(retainedParentIndex, target.getChildCount()));
+    target.addView(retainedView, index, retainedLayoutParams);
   }
 
   /**
@@ -214,8 +266,7 @@ public class FlutterWebView implements PlatformWebView {
 
   private void restoreBackgroundAttachment(
           @NonNull View view,
-          @NonNull ViewGroup.LayoutParams retainedLayoutParams,
-          boolean mayRetry
+          @NonNull ViewGroup.LayoutParams retainedLayoutParams
   ) {
     // A headless runtime created by a background CDM / PendingIntent wake-up
     // had no Activity and therefore no window to snapshot. Once the user has
@@ -238,14 +289,10 @@ public class FlutterWebView implements PlatformWebView {
     }
     if (view.getParent() != null) {
       // PlatformView disposal may detach its presentation container after this
-      // callback. Retry once on the UI queue without stealing from a live parent.
-      if (mayRetry) {
-        com.pichillilorenzo.flutter_inappwebview_android.WebViewStartupCoordinator.postOnMain(
-                () -> restoreBackgroundAttachment(view, retainedLayoutParams, false));
-      } else {
-        backgroundParent = null;
-        backgroundParentIndex = -1;
-      }
+      // callback. The unconditional stabilization pass scheduled by
+      // prepareForBackgroundRuntime owns that post-dispose state.
+      backgroundParent = null;
+      backgroundParentIndex = -1;
       return;
     }
     final int index = Math.max(0, Math.min(targetIndex, target.getChildCount()));

@@ -22,6 +22,7 @@ import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 
 import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
@@ -179,6 +180,109 @@ public class FlutterWebViewRestoreTest {
 
     // Same Activity: the runtime keeps its original position, not index 0.
     verify(host).addView(same(nativeView), eq(3), any());
+  }
+
+  @Test public void sameHostReleaseStabilizesHeadlessStateAfterPresenterCleanup() {
+    InAppWebViewFlutterPlugin plugin = plugin();
+    InAppWebView nativeView = mock(InAppWebView.class);
+    FlutterWebView runtime = runtime(plugin, nativeView);
+    runtime.keepAliveId = "A";
+
+    ViewGroup host = mock(ViewGroup.class);
+    when(host.isAttachedToWindow()).thenReturn(true);
+    when(host.indexOfChild(nativeView)).thenReturn(0);
+    hostActivity(plugin, host);
+    when(nativeView.getParent()).thenReturn(host);
+
+    FrameLayout.LayoutParams headlessLayout = new FrameLayout.LayoutParams(1, 1);
+    AtomicReference<ViewGroup.LayoutParams> actualLayout =
+        new AtomicReference<>(headlessLayout);
+    AtomicReference<Float> actualAlpha = new AtomicReference<>(0f);
+    when(nativeView.getLayoutParams()).thenAnswer(ignored -> actualLayout.get());
+    doAnswer(invocation -> {
+      actualLayout.set(invocation.getArgument(0));
+      return null;
+    }).when(nativeView).setLayoutParams(any());
+    when(nativeView.getAlpha()).thenAnswer(ignored -> actualAlpha.get());
+    doAnswer(invocation -> {
+      actualAlpha.set(invocation.getArgument(0));
+      return null;
+    }).when(nativeView).setAlpha(anyFloat());
+
+    runtime.restoreKeepAlwaysVisibleForChromiumOnRelease = true;
+    runtime.prepareForPresentation();
+
+    try (MockedStatic<WebViewStartupCoordinator> scheduler =
+             mockStatic(WebViewStartupCoordinator.class)) {
+      runtime.dispose();
+
+      ArgumentCaptor<Runnable> finalizer = ArgumentCaptor.forClass(Runnable.class);
+      scheduler.verify(() -> WebViewStartupCoordinator.postOnMain(finalizer.capture()));
+
+      // PlatformViewsController finishes its own teardown after dispose() and
+      // can write the presenter's full-screen state back over the synchronous
+      // headless restore. The queued finalizer owns the actual final state.
+      FrameLayout.LayoutParams presenterLayout = new FrameLayout.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+      actualLayout.set(presenterLayout);
+      actualAlpha.set(1f);
+
+      finalizer.getValue().run();
+    }
+
+    assertSame(headlessLayout, actualLayout.get());
+    assertEquals(0f, actualAlpha.get(), 0f);
+  }
+
+  @Test public void aNewPresentationInvalidatesTheQueuedBackgroundFinalizer() {
+    InAppWebViewFlutterPlugin plugin = plugin();
+    InAppWebView nativeView = mock(InAppWebView.class);
+    FlutterWebView runtime = runtime(plugin, nativeView);
+    runtime.keepAliveId = "A";
+
+    ViewGroup host = mock(ViewGroup.class);
+    when(host.isAttachedToWindow()).thenReturn(true);
+    when(host.indexOfChild(nativeView)).thenReturn(0);
+    hostActivity(plugin, host);
+    when(nativeView.getParent()).thenReturn(host);
+
+    FrameLayout.LayoutParams headlessLayout = new FrameLayout.LayoutParams(1, 1);
+    AtomicReference<ViewGroup.LayoutParams> actualLayout =
+        new AtomicReference<>(headlessLayout);
+    AtomicReference<Float> actualAlpha = new AtomicReference<>(0f);
+    when(nativeView.getLayoutParams()).thenAnswer(ignored -> actualLayout.get());
+    doAnswer(invocation -> {
+      actualLayout.set(invocation.getArgument(0));
+      return null;
+    }).when(nativeView).setLayoutParams(any());
+    when(nativeView.getAlpha()).thenAnswer(ignored -> actualAlpha.get());
+    doAnswer(invocation -> {
+      actualAlpha.set(invocation.getArgument(0));
+      return null;
+    }).when(nativeView).setAlpha(anyFloat());
+
+    runtime.restoreKeepAlwaysVisibleForChromiumOnRelease = true;
+    runtime.prepareForPresentation();
+
+    try (MockedStatic<WebViewStartupCoordinator> scheduler =
+             mockStatic(WebViewStartupCoordinator.class)) {
+      runtime.dispose();
+      ArgumentCaptor<Runnable> finalizer = ArgumentCaptor.forClass(Runnable.class);
+      scheduler.verify(() -> WebViewStartupCoordinator.postOnMain(finalizer.capture()));
+
+      // A new route begins presenting the retained runtime before its native
+      // AttachmentPlatformView has finished claiming it. The presentation
+      // generation must already make the old release task stale.
+      runtime.prepareForPresentation();
+      ViewGroup.LayoutParams newPresentationLayout = actualLayout.get();
+      assertNotSame(headlessLayout, newPresentationLayout);
+      assertEquals(1f, actualAlpha.get(), 0f);
+
+      finalizer.getValue().run();
+
+      assertSame(newPresentationLayout, actualLayout.get());
+      assertEquals(1f, actualAlpha.get(), 0f);
+    }
   }
 
   @Test public void aWindowlessWakeUpStillHostsInTheActivityThatShowedUp() {
