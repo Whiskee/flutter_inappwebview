@@ -456,8 +456,9 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
   }
 
   void _onPlatformViewCreated(int id) async {
-    if (params.attachOnly) {
-      bool? attached;
+    final strict = params.attachOnly;
+    bool? attached;
+    if (strict) {
       try {
         attached = await MethodChannel(
           'com.pichillilorenzo/flutter_inappwebview_attach_$id',
@@ -465,8 +466,13 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
       } catch (_) {
         // A lost reply is not proof that the native transfer did not happen.
       }
-      _reportAttachResult(attached);
-      if (attached != true || _disposed) return;
+      if (attached != true || _disposed) {
+        // No owner is going to be established, so there is no handover to
+        // finish first. A disposal that got here first already reported
+        // unknown, which makes this call a no-op.
+        _reportAttachResult(attached);
+        return;
+      }
     }
     dynamic viewId = id;
     if (params.headlessWebView?.isRunning() ?? false) {
@@ -482,6 +488,33 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
     );
     _androidParams.pullToRefreshController?.init(viewId);
     _androidParams.findInteractionController?.init(viewId);
+    if (strict) {
+      // A successful acknowledgement is what licenses the runtime owner to
+      // release the headless side it handed over, so it cannot be delivered
+      // until that side has been retired just above. internalDispose() clears
+      // `_started`, which is the early return that keeps
+      // AndroidHeadlessInAppWebView.dispose() off this runtime
+      // (headless_in_app_webview.dart:454); acknowledging any earlier hands
+      // the owner a headless instance that still believes it owns the
+      // runtime, so its release reaches `_webViewController?.dispose()`
+      // (:470) and unregisters the method call handler on the very channel
+      // the controller above just claimed.
+      //
+      // internalDispose() also retires the old controller without removing
+      // the shared handler. That makes a controller reference captured before
+      // the handover inert, while the new controller below remains the sole
+      // Dart owner of the runtime channel.
+      //
+      // It must also stay ahead of ordinary onWebViewCreated, which is what
+      // onAttachResult documents. Position relative to the controller
+      // construction is load-bearing too: acknowledging afterwards means a
+      // host that tears the presentation down from inside the receipt leaves
+      // the same terminal ownership as an ordinary teardown, with the
+      // runtime channel held by this widget's controller rather than by the
+      // headless instance it replaced.
+      _reportAttachResult(attached);
+      if (_disposed) return;
+    }
     debugLog(
       className: runtimeType.toString(),
       id: viewId?.toString(),
@@ -551,6 +584,15 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
     if (params.attachOnly && _attachStarted && !_attachReported) {
       // PlatformView disposal drops pending created callbacks. Report unknown
       // so the runtime owner drains both the headless and keep-alive sides.
+      //
+      // Unlike the acknowledgement in _onPlatformViewCreated, this one does
+      // not have to wait for anything below it: `!_attachReported` is only
+      // true while the handover is still pending, and a pending handover has
+      // not assigned `_controller` yet, so the teardown this precedes is a
+      // no-op on the runtime. Moving it after that teardown is therefore
+      // equivalent today - but only because of that premise, so anything that
+      // starts publishing `_controller` before the acknowledgement has to
+      // revisit this position too.
       _reportAttachResult(null);
     }
     dynamic viewId = _controller?.getViewId();
