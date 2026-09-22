@@ -497,16 +497,18 @@ extension InternalHeadlessInAppWebView on AndroidHeadlessInAppWebView {
   /// - [AndroidHeadlessInAppWebView.webViewController] is a public getter, so
   ///   dropping the reference stops it handing the transferred controller to
   ///   a host that would dispose it directly.
+  /// - A controller reference captured before the handover is retired without
+  ///   removing the MethodChannel handler. Its later `dispose()` is therefore
+  ///   inert instead of unregistering the controller that replaced it.
   ///
   /// The controller itself is deliberately *not* disposed: that is the one
   /// action that would unregister the shared handler.
   ///
-  /// A reference a host captured before the handover is still its own to
-  /// dispose; nothing here can reach that.
   Future<void> internalDispose() async {
     _started = false;
     _running = false;
     _retired = true;
+    _webViewController?.internalRetireAttachmentController();
     _webViewController = null;
     _controllerFromPlatform = null;
   }

@@ -201,10 +201,9 @@ public class FlutterWebView implements PlatformWebView {
                       retainedParent,
                       retainedParentIndex,
                       releaseGeneration));
+    } else {
+      clearBackgroundSnapshot();
     }
-    backgroundSnapshotTaken = false;
-    backgroundLayoutParams = null;
-    backgroundAlpha = null;
     if (webView != null) {
       webView.setKeepAlwaysVisibleForChromium(true);
     }
@@ -218,8 +217,13 @@ public class FlutterWebView implements PlatformWebView {
           int retainedParentIndex,
           long releaseGeneration
   ) {
-    if (webView == null || getView() != retainedView ||
-            presentationGeneration != releaseGeneration) {
+    // A newer presentation needs the original background snapshot for its own
+    // release, so its generation invalidates this task without clearing it.
+    if (presentationGeneration != releaseGeneration) {
+      return;
+    }
+    if (webView == null || getView() != retainedView) {
+      clearBackgroundSnapshot();
       return;
     }
     retainedView.setLayoutParams(retainedLayoutParams);
@@ -236,10 +240,20 @@ public class FlutterWebView implements PlatformWebView {
       retainedParentIndex = 0;
     }
     if (target == null || retainedView.getParent() != null) {
+      clearBackgroundSnapshot();
       return;
     }
     final int index = Math.max(0, Math.min(retainedParentIndex, target.getChildCount()));
     target.addView(retainedView, index, retainedLayoutParams);
+    clearBackgroundSnapshot();
+  }
+
+  private void clearBackgroundSnapshot() {
+    backgroundSnapshotTaken = false;
+    backgroundLayoutParams = null;
+    backgroundAlpha = null;
+    backgroundParent = null;
+    backgroundParentIndex = -1;
   }
 
   /**
@@ -283,22 +297,16 @@ public class FlutterWebView implements PlatformWebView {
     final ViewGroup target = retainedParent != null ? retainedParent : currentHost;
     final int targetIndex = retainedParent != null ? backgroundParentIndex : 0;
     if (target == null || view.getParent() == target) {
-      backgroundParent = null;
-      backgroundParentIndex = -1;
       return;
     }
     if (view.getParent() != null) {
       // PlatformView disposal may detach its presentation container after this
       // callback. The unconditional stabilization pass scheduled by
       // prepareForBackgroundRuntime owns that post-dispose state.
-      backgroundParent = null;
-      backgroundParentIndex = -1;
       return;
     }
     final int index = Math.max(0, Math.min(targetIndex, target.getChildCount()));
     target.addView(view, index, retainedLayoutParams);
-    backgroundParent = null;
-    backgroundParentIndex = -1;
   }
 
   @SuppressLint("RestrictedApi")
@@ -358,8 +366,7 @@ public class FlutterWebView implements PlatformWebView {
   @Override
   public void dispose() {
     if (keepAliveId == null && webView != null) {
-      backgroundParent = null;
-      backgroundParentIndex = -1;
+      clearBackgroundSnapshot();
       webView.dispose();
       webView = null;
 

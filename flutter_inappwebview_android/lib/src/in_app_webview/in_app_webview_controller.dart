@@ -3271,4 +3271,6 @@ class AndroidInAppWebViewController extends PlatformInAppWebViewController
 
 extension InternalInAppWebViewController on AndroidInAppWebViewController {
   get handleMethod => _handleMethod;
+
+  void internalRetireAttachmentController() => _retireAttachmentController();
 }

@@ -25,6 +25,10 @@ enum _Release {
   /// `webViewController` is a public getter on PlatformHeadlessInAppWebView.
   controllerInAttachResult,
 
+  /// A host may have retained the controller before native hands the runtime
+  /// to the platform view. That stale reference must become inert too.
+  savedControllerInAttachResult,
+
   /// `run()` gates re-entry on `_started`, which retirement clears.
   rerunInAttachResult,
 
@@ -57,6 +61,7 @@ void main() {
     _Release.disposeInWebViewCreated,
     _Release.disposeInAttachResult,
     _Release.controllerInAttachResult,
+    _Release.savedControllerInAttachResult,
     _Release.rerunInAttachResult,
   ]) {
     testWidgets(
@@ -240,6 +245,7 @@ Future<_Probe> _handover(
   );
   await headless.run();
   expect(headless.isRunning(), isTrue);
+  final savedHeadlessController = headless.webViewController;
 
   var headlessNativeDisposes = 0;
   messenger.setMockMethodCallHandler(
@@ -311,6 +317,8 @@ Future<_Probe> _handover(
             unawaited(headless.dispose());
           case _Release.controllerInAttachResult:
             headless.webViewController?.dispose();
+          case _Release.savedControllerInAttachResult:
+            savedHeadlessController?.dispose();
           case _Release.rerunInAttachResult:
             unawaited(headless.run());
           case _Release.widgetInAttachResult:

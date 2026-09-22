@@ -500,11 +500,10 @@ class AndroidInAppWebViewWidget extends PlatformInAppWebViewWidget {
       // (:470) and unregisters the method call handler on the very channel
       // the controller above just claimed.
       //
-      // This ordering covers the documented release, `dispose()`, and nothing
-      // more. The runtime channel has other reachable ways to lose its
-      // handler - disposing `headless.webViewController` directly, or calling
-      // `run()` again on a retired instance - which predate this MR and are
-      // not fixed by where this call sits. See internalDispose().
+      // internalDispose() also retires the old controller without removing
+      // the shared handler. That makes a controller reference captured before
+      // the handover inert, while the new controller below remains the sole
+      // Dart owner of the runtime channel.
       //
       // It must also stay ahead of ordinary onWebViewCreated, which is what
       // onAttachResult documents. Position relative to the controller
