@@ -631,6 +631,33 @@ public class InitialJavaScriptBridgeTest {
 
   @Test
   @SuppressWarnings("unchecked")
+  public void throwableFromStartupExecutorFailsStartupInsteadOfCrashing() throws Exception {
+    compat.when(() -> WebViewCompat.startUpWebView(
+            any(), any(), any(WebViewOutcomeReceiver.class))).thenAnswer(invocation -> {
+      WebViewStartupCoordinator.SAFE_EXECUTOR.execute(() -> {
+        throw new android.util.AndroidRuntimeException(
+                new android.content.res.Resources.NotFoundException("failed to redirect ResourcesImpl"));
+      });
+      return null;
+    });
+    WebViewStartupCoordinator.Callback callback = mock(WebViewStartupCoordinator.Callback.class);
+
+    WebViewStartupCoordinator.ensureStarted(plugin.applicationContext, callback);
+    for (int i = 0; i < 200; i++) {
+      shadowOf(Looper.getMainLooper()).idle();
+      try {
+        verify(callback).onError(any());
+        break;
+      } catch (AssertionError notYet) {
+        Thread.sleep(10);
+      }
+    }
+    verify(callback).onError(any());
+    verify(callback, never()).onSuccess();
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
   public void unsupportedAsyncStartupFallsBackToSynchronousWebViewStartup() {
     compat.when(() -> WebViewCompat.startUpWebView(
             any(), any(), any(WebViewOutcomeReceiver.class)))

@@ -13,6 +13,7 @@ import androidx.webkit.WebViewStartupException;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -35,6 +36,21 @@ public final class WebViewStartupCoordinator {
   private static final ExecutorService BACKGROUND_EXECUTOR =
           Executors.newSingleThreadExecutor();
   private static final List<Callback> PENDING_CALLBACKS = new ArrayList<>();
+
+  /**
+   * androidx runs the provider loading on this executor, outside any try/catch we own.
+   * The system can throw there (e.g. AndroidRuntimeException "failed to redirect
+   * ResourcesImpl" while the WebView package is being updated); an uncaught throwable
+   * would kill the process, so route it into the retryable startup failure path.
+   */
+  static final Executor SAFE_EXECUTOR = command ->
+          BACKGROUND_EXECUTOR.execute(() -> {
+            try {
+              command.run();
+            } catch (Throwable error) {
+              complete(error);
+            }
+          });
 
   private static State state = State.NOT_STARTED;
   private WebViewStartupCoordinator() {}
@@ -73,7 +89,7 @@ public final class WebViewStartupCoordinator {
     }
 
     try {
-      WebViewStartUpConfig config = new WebViewStartUpConfig.Builder(BACKGROUND_EXECUTOR)
+      WebViewStartUpConfig config = new WebViewStartUpConfig.Builder(SAFE_EXECUTOR)
               .build();
       WebViewCompat.startUpWebView(
               context.getApplicationContext(),
