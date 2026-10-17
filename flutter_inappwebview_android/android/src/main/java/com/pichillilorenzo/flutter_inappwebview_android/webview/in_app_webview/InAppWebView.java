@@ -2380,6 +2380,14 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
         final Handler timeoutHandler = new Handler(Looper.getMainLooper());
         final Runnable timeout = () -> completion.complete("Blank document did not finish within 5 seconds");
         setWebViewClient(new WebViewClient() {
+          @RequiresApi(api = Build.VERSION_CODES.O)
+          @Override public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+            // This document is already terminal. Handle the renderer exit for
+            // this retained instance and destroy it; the default false return
+            // would terminate the host even though its successor is healthy.
+            InAppWebView.this.dispose();
+            return true;
+          }
           @Override public void onPageFinished(WebView view, String url) {
             if (!"about:blank".equals(url)) return;
             timeoutHandler.removeCallbacks(timeout);
@@ -2405,7 +2413,7 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
 
   @Override
   public void dispose() {
-    if (runtimeDisposed) return;
+    if (runtimeDisposed || (runtimeDisposePrepared && !runtimeActivityStopRequested)) return;
     if (!runtimeDisposePrepared) {
     if (channelDelegate != null) {
       channelDelegate.dispose();
@@ -2419,7 +2427,11 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
       WebViewCompat.setWebViewRenderProcessClient(this, null);
     }
     setWebChromeClient(new WebChromeClient());
-    setWebViewClient(new WebViewClient());
+    setWebViewClient(new WebViewClient() {
+      @Override public void onPageFinished(WebView view, String url) {
+        if (!runtimeActivityStopRequested) completeRuntimeDisposal();
+      }
+    });
     interceptOnlyAsyncAjaxRequestsPluginScript = null;
     userContentController.dispose();
     if (findInteractionController != null) {
@@ -2468,12 +2480,23 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
     plugin = null;
     runtimeDisposePrepared = true;
     }
-    // Final disposal is synchronous on the platform queue after parent removal.
-    // Do not acknowledge it before a future about:blank callback destroys the view.
+    // Ordinary WebViews keep the target branch's blank-navigation destruction
+    // timing. Only an explicitly stopped terminal runtime needs a synchronous
+    // release receipt, including when its blank unload previously timed out.
+    if (!runtimeActivityStopRequested) {
+      loadUrl("about:blank");
+      return;
+    }
     ViewParent nativeParent = getParent();
     if (nativeParent instanceof ViewGroup) ((ViewGroup) nativeParent).removeView(this);
     cancelRuntimeStopTimeout();
     stopLoading();
+    completeRuntimeDisposal();
+  }
+
+  /** Complete one native destruction, preserving exact stop identity and waiter ownership. */
+  private void completeRuntimeDisposal() {
+    if (runtimeDisposed) return;
     destroy();
     runtimeDisposed = true;
     runtimeActivityIdentity().stopConfirmed = true;

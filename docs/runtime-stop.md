@@ -28,9 +28,13 @@ Blank navigation is document teardown; it is not proof that arbitrary persistent
 service workers, shared process memory, or app-owned network services have ended.
 It also does not quantify memory or battery improvement.
 
-Final disposal remains required. Android removes the exact native WebView from its
-actual parent and calls `destroy()` synchronously instead of acknowledging disposal
-before a later navigation callback. iOS native disposal is idempotent. Its Dart
+Final disposal remains required. For an instance explicitly marked by the native
+runtime-stop entry, Android removes that exact WebView from its actual parent and
+calls `destroy()` synchronously, including after failed blank navigation. Its
+terminal stop client handles renderer death by destroying only the old view.
+Ordinary Android WebViews preserve the target branch's blank-navigation callback
+destruction timing; their manager disposal receipt does not prove destruction has
+already completed. iOS native disposal is idempotent. Its Dart
 presentation wrapper may release keep-alive presentation first and later dispose
 fully: it saves the original channel, unregisters only if that wrapper still owns
 the handler, and disposes storage once. Reattachment or runtime channel reclaim
