@@ -48,6 +48,7 @@ public enum WebViewChannelDelegateMethods {
   scrollBy,
   pause,
   resume,
+  stopRuntimeActivity,
   pauseTimers,
   resumeTimers,
   printCurrentPage,

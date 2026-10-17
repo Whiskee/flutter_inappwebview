@@ -276,6 +276,14 @@ public class WebViewChannelDelegate: ChannelDelegate {
             webView?.scrollBy(x: x, y: y, animated: animated)
             result(true)
             break
+        case .stopRuntimeActivity:
+            if let webView = webView {
+                webView.stopRuntimeActivity { error in
+                    if let error = error { result(FlutterError(code: "runtime_stop_failed", message: error.localizedDescription, details: nil)) }
+                    else { result(nil) }
+                }
+            } else { result(FlutterError(code: "runtime_unavailable", message: "Native runtime is unavailable", details: nil)) }
+            break
         case .pauseTimers:
             webView?.pauseTimers()
             result(true)

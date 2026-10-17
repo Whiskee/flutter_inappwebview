@@ -140,6 +140,18 @@ public class InAppWebViewManager extends ChannelDelegateImpl {
         }
         result.success(true);
         break;
+      case "stopKeepAliveRuntimeActivity": {
+        final String keepAliveId = (String) call.argument("keepAliveId");
+        FlutterWebView target = keepAliveWebViews.get(keepAliveId);
+        if (target == null) { result.success(false); break; }
+        if (target.webView == null) { result.success(true); break; }
+        target.webView.stopRuntimeActivity(new MethodChannel.Result() {
+          public void success(Object value) { result.success(true); }
+          public void error(String code, String message, Object details) { result.error(code, message, details); }
+          public void notImplemented() { result.notImplemented(); }
+        });
+        break;
+      }
       case "disposeKeepAlive":
         final String keepAliveId = (String) call.argument("keepAliveId");
         if (keepAliveId != null) {

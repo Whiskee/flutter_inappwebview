@@ -2477,6 +2477,22 @@ class AndroidInAppWebViewController extends PlatformInAppWebViewController
   }
 
   @override
+  Future<void> stopRuntimeActivity() async {
+    final target = channel;
+    if (target == null) throw StateError('Runtime controller is unavailable');
+    await target.invokeMethod('stopRuntimeActivity');
+  }
+
+  @override
+  Future<bool> stopKeepAliveRuntimeActivity(
+    InAppWebViewKeepAlive keepAlive,
+  ) async =>
+      await _staticChannel.invokeMethod<bool>('stopKeepAliveRuntimeActivity', {
+        'keepAliveId': keepAlive.id,
+      }) ??
+      false;
+
+  @override
   Future<void> pauseTimers() async {
     Map<String, dynamic> args = <String, dynamic>{};
     await channel?.invokeMethod('pauseTimers', args);

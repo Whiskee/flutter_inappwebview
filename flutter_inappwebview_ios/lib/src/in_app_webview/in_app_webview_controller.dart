@@ -2427,6 +2427,22 @@ class IOSInAppWebViewController extends PlatformInAppWebViewController
   }
 
   @override
+  Future<void> stopRuntimeActivity() async {
+    final target = channel;
+    if (target == null) throw StateError('Runtime controller is unavailable');
+    await target.invokeMethod('stopRuntimeActivity');
+  }
+
+  @override
+  Future<bool> stopKeepAliveRuntimeActivity(
+    InAppWebViewKeepAlive keepAlive,
+  ) async =>
+      await _staticChannel.invokeMethod<bool>('stopKeepAliveRuntimeActivity', {
+        'keepAliveId': keepAlive.id,
+      }) ??
+      false;
+
+  @override
   Future<void> pauseTimers() async {
     Map<String, dynamic> args = <String, dynamic>{};
     await channel?.invokeMethod('pauseTimers', args);
@@ -3154,12 +3170,29 @@ class IOSInAppWebViewController extends PlatformInAppWebViewController
     return id;
   }
 
+  MethodChannel? _retiredChannel;
+  bool _storageDisposed = false;
+  bool _fullyDisposed = false;
+
   @override
   void dispose({bool isKeepAlive = false}) {
-    disposeChannel(removeMethodCallHandler: !isKeepAlive);
+    if (_fullyDisposed) return;
+    if (!disposed) {
+      _retiredChannel = channel;
+      // Keep the registered owner identity until final retirement. The native
+      // view can transfer and install a successor on this same channel name.
+      disposeChannel(removeMethodCallHandler: false);
+    }
     _inAppBrowser = null;
-    webStorage.dispose();
+    if (!_storageDisposed) {
+      _storageDisposed = true;
+      webStorage.dispose();
+    }
     if (!isKeepAlive) {
+      _fullyDisposed = true;
+      final retiredChannel = _retiredChannel;
+      if (retiredChannel != null) unregisterRetiredChannel(retiredChannel);
+      _retiredChannel = null;
       _controllerFromPlatform = null;
       _javaScriptHandlersMap.clear();
       _userScripts.clear();

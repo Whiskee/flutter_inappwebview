@@ -372,6 +372,17 @@ class InAppWebViewController {
     bool animated = false,
   }) => platform.scrollBy(x: x, y: y, animated: animated);
 
+  /// Permanently unloads this document while retaining its native view/channel.
+  /// Completion confirms the blank document; still call dispose afterwards.
+  Future<void> stopRuntimeActivity() => platform.stopRuntimeActivity();
+
+  /// Stops an exact keep-alive runtime. False means the identity was not found.
+  static Future<bool> stopKeepAliveRuntimeActivity(
+    InAppWebViewKeepAlive keepAlive,
+  ) => PlatformInAppWebViewController.static().stopKeepAliveRuntimeActivity(
+    keepAlive,
+  );
+
   ///{@macro flutter_inappwebview_platform_interface.PlatformInAppWebViewController.pauseTimers}
   ///
   ///{@macro flutter_inappwebview_platform_interface.PlatformInAppWebViewController.pauseTimers.supported_platforms}

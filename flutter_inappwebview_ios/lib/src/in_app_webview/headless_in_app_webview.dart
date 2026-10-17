@@ -322,11 +322,14 @@ class IOSHeadlessInAppWebView extends PlatformHeadlessInAppWebView
     return null;
   }
 
+  bool _everSubmittedRun = false;
+
   Future<void> run() async {
     if (_started) {
       return;
     }
     _started = true;
+    _everSubmittedRun = true;
     _init();
 
     final initialSettings = params.initialSettings ?? InAppWebViewSettings();
@@ -436,6 +439,15 @@ class IOSHeadlessInAppWebView extends PlatformHeadlessInAppWebView
       args,
     ))?.cast<String, dynamic>();
     return MapSize.fromMap(sizeMap);
+  }
+
+  @override
+  Future<bool> stopRuntimeActivity() async {
+    if (!_everSubmittedRun) return false;
+    return await _sharedChannel.invokeMethod<bool>('stopRuntimeActivity', {
+          'id': id,
+        }) ??
+        false;
   }
 
   @override
