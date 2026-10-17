@@ -913,6 +913,10 @@ class HeadlessInAppWebView {
   ///{@macro flutter_inappwebview_platform_interface.PlatformHeadlessInAppWebView.getSize.supported_platforms}
   Future<Size?> getSize() => platform.getSize();
 
+  /// Unloads the exact runtime without destroying its native instance.
+  /// False means no registered native identity was found.
+  Future<bool> stopRuntimeActivity() => platform.stopRuntimeActivity();
+
   ///{@macro flutter_inappwebview_platform_interface.PlatformHeadlessInAppWebView.dispose}
   ///
   ///{@macro flutter_inappwebview_platform_interface.PlatformHeadlessInAppWebView.dispose.supported_platforms}

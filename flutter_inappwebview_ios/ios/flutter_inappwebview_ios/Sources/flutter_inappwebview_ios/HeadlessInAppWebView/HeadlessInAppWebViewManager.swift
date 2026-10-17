@@ -16,6 +16,7 @@ import AVFoundation
 public class HeadlessInAppWebViewManager: ChannelDelegate {
     static let METHOD_CHANNEL_NAME = "com.pichillilorenzo/flutter_headless_inappwebview"
     var plugin: InAppWebViewFlutterPlugin?
+    private var runtimeTargets: [String: WeakRuntimeActivityTarget] = [:]
     var webViews: [String: HeadlessInAppWebView?] = [:]
     
     init(plugin: InAppWebViewFlutterPlugin) {
@@ -28,6 +29,14 @@ public class HeadlessInAppWebViewManager: ChannelDelegate {
         let id: String = arguments!["id"] as! String
 
         switch call.method {
+            case "stopRuntimeActivity":
+                guard let target = runtimeTargets[id] else { result(false); return }
+                guard let webView = target.value else { result(target.stopConfirmed); return }
+                webView.stopRuntimeActivity { error in
+                    if let error = error { result(FlutterError(code: "runtime_stop_failed", message: error.localizedDescription, details: nil)) }
+                    else { result(true) }
+                }
+                break
             case "run":
                 let params = arguments!["params"] as! [String: Any?]
                 run(id: id, params: params)
@@ -47,6 +56,13 @@ public class HeadlessInAppWebViewManager: ChannelDelegate {
             withFrame: CGRect.zero,
             viewIdentifier: id,
             params: params as NSDictionary)
+        if runtimeTargets.count >= 256 {
+            for key in runtimeTargets.keys.filter({ runtimeTargets[$0]?.value == nil }) {
+                if runtimeTargets.count < 256 { break }
+                runtimeTargets.removeValue(forKey: key)
+            }
+        }
+        runtimeTargets[id] = flutterWebView.webView()?.runtimeActivityIdentity()
         let headlessInAppWebView = HeadlessInAppWebView(plugin: plugin, id: id, flutterWebView: flutterWebView)
         webViews[id] = headlessInAppWebView
         
@@ -62,6 +78,7 @@ public class HeadlessInAppWebViewManager: ChannelDelegate {
             headlessWebView?.dispose()
         }
         webViews.removeAll()
+        runtimeTargets.removeAll()
         plugin = nil
     }
     

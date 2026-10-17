@@ -600,6 +600,9 @@ class Color_ extends Color {
 }
 
 abstract mixin class ChannelController implements Disposable {
+  static final Map<String, WeakReference<ChannelController>> _methodCallOwners =
+      {};
+
   MethodChannel? _channel;
   Future<dynamic> Function(MethodCall call)? _handler;
 
@@ -643,6 +646,7 @@ extension InternalChannelController on ChannelController {
       'Method Call Handler for ${runtimeType} not initialized!',
     );
 
+    ChannelController._methodCallOwners[channel!.name] = WeakReference(this);
     channel?.setMethodCallHandler((call) async {
       if (disposed) return null;
       try {
@@ -654,9 +658,29 @@ extension InternalChannelController on ChannelController {
     });
   }
 
+  /// Finalize an exact retired wrapper without unregistering a successor that
+  /// has installed a handler on the same native-view channel during transfer.
+  void unregisterRetiredChannel(MethodChannel target) {
+    if (!identical(
+      ChannelController._methodCallOwners[target.name]?.target,
+      this,
+    ))
+      return;
+    target.setMethodCallHandler(null);
+    ChannelController._methodCallOwners.remove(target.name);
+  }
+
   disposeChannel({bool removeMethodCallHandler = true}) {
     if (removeMethodCallHandler) {
-      channel?.setMethodCallHandler(null);
+      final target = channel;
+      target?.setMethodCallHandler(null);
+      if (target != null &&
+          identical(
+            ChannelController._methodCallOwners[target.name]?.target,
+            this,
+          )) {
+        ChannelController._methodCallOwners.remove(target.name);
+      }
     }
     channel = null;
     handler = null;

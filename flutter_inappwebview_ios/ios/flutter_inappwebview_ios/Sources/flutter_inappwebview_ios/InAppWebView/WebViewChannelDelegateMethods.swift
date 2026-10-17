@@ -46,6 +46,7 @@ public enum WebViewChannelDelegateMethods: String {
     case clearCache = "clearCache"
     case scrollTo = "scrollTo"
     case scrollBy = "scrollBy"
+    case stopRuntimeActivity = "stopRuntimeActivity"
     case pauseTimers = "pauseTimers"
     case resumeTimers = "resumeTimers"
     case printCurrentPage = "printCurrentPage"

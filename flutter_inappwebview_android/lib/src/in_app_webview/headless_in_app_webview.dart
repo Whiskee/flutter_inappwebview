@@ -325,6 +325,8 @@ class AndroidHeadlessInAppWebView extends PlatformHeadlessInAppWebView
     return null;
   }
 
+  bool _everSubmittedRun = false;
+
   Future<void> run() async {
     // `_retired` as well as `_started`: a platform view that took this
     // runtime over cleared `_started`, which would otherwise make this
@@ -336,6 +338,7 @@ class AndroidHeadlessInAppWebView extends PlatformHeadlessInAppWebView
       return;
     }
     _started = true;
+    _everSubmittedRun = true;
     _init();
 
     final initialSettings = params.initialSettings ?? InAppWebViewSettings();
@@ -449,6 +452,15 @@ class AndroidHeadlessInAppWebView extends PlatformHeadlessInAppWebView
       args,
     ))?.cast<String, dynamic>();
     return MapSize.fromMap(sizeMap);
+  }
+
+  @override
+  Future<bool> stopRuntimeActivity() async {
+    if (!_everSubmittedRun) return false;
+    return await _sharedChannel.invokeMethod<bool>('stopRuntimeActivity', {
+          'id': id,
+        }) ??
+        false;
   }
 
   @override

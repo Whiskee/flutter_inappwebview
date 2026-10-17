@@ -41,6 +41,15 @@ public class InAppWebViewManager: ChannelDelegate {
                     result(false)
                 }
                 break
+            case "stopKeepAliveRuntimeActivity":
+                let keepAliveId = arguments!["keepAliveId"] as! String
+                guard let holder = keepAliveWebViews[keepAliveId] as? FlutterWebViewController else { result(false); return }
+                guard let webView = holder.webView() else { result(true); return }
+                webView.stopRuntimeActivity { error in
+                    if let error = error { result(FlutterError(code: "runtime_stop_failed", message: error.localizedDescription, details: nil)) }
+                    else { result(true) }
+                }
+                break
             case "disposeKeepAlive":
                 let keepAliveId = arguments!["keepAliveId"] as! String
                 disposeKeepAlive(keepAliveId: keepAliveId)

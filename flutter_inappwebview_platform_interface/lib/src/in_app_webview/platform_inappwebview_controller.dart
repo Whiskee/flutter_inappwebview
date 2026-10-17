@@ -1603,6 +1603,20 @@ abstract class PlatformInAppWebViewController extends PlatformInterface
     );
   }
 
+  /// Permanently unloads this WebView's document without destroying its native
+  /// view or command channel. Android and iOS only. Completion confirms the
+  /// replacement blank document; a timeout/error is retryable. This never calls
+  /// Android's process-wide pauseTimers. The view must subsequently be disposed.
+  Future<void> stopRuntimeActivity() =>
+      throw UnimplementedError('stopRuntimeActivity is not implemented');
+
+  /// Stops the exact keep-alive instance even during a presentation handoff.
+  /// False means this candidate identity is unknown, not proof of release.
+  Future<bool> stopKeepAliveRuntimeActivity(InAppWebViewKeepAlive keepAlive) =>
+      throw UnimplementedError(
+        'stopKeepAliveRuntimeActivity is not implemented',
+      );
+
   ///{@template flutter_inappwebview_platform_interface.PlatformInAppWebViewController.pauseTimers}
   ///On Android native WebView, it pauses all layout, parsing, and JavaScript timers for all WebViews.
   ///This is a global requests, not restricted to just this WebView. This can be useful if the application has been paused.

@@ -993,6 +993,7 @@ public class InAppWebView: WKWebView, UIScrollViewDelegate, WKUIDelegate,
     }
     
     public func loadUrl(urlRequest: URLRequest, allowingReadAccessTo: URL?) {
+        if runtimeActivityStopRequested { return }
         let url = urlRequest.url!
         
         if #available(iOS 9.0, *), let allowingReadAccessTo = allowingReadAccessTo, url.scheme == "file", allowingReadAccessTo.scheme == "file" {
@@ -1012,6 +1013,7 @@ public class InAppWebView: WKWebView, UIScrollViewDelegate, WKUIDelegate,
     }
     
     public func loadData(data: String, mimeType: String, encoding: String, baseUrl: URL, allowingReadAccessTo: URL?) {
+        if runtimeActivityStopRequested { return }
         if #available(iOS 9.0, *), let allowingReadAccessTo = allowingReadAccessTo, baseUrl.scheme == "file", allowingReadAccessTo.scheme == "file" {
             loadFileURL(baseUrl, allowingReadAccessTo: allowingReadAccessTo)
         }
@@ -1024,6 +1026,7 @@ public class InAppWebView: WKWebView, UIScrollViewDelegate, WKUIDelegate,
     }
     
     public func loadFile(assetFilePath: String) throws {
+        if runtimeActivityStopRequested { return }
         if let plugin = plugin {
             let assetURL = try Util.getUrlAsset(plugin: plugin, assetFilePath: assetFilePath)
             let urlRequest = URLRequest(url: assetURL)
@@ -3213,6 +3216,64 @@ if(window.\(JavaScriptBridgeJS.get_JAVASCRIPT_BRIDGE_NAME())[\(_callHandlerID)] 
     }
     
     
+    public override func load(_ request: URLRequest) -> WKNavigation? {
+        if runtimeActivityStopRequested { return nil }
+        return super.load(request)
+    }
+    public override func loadHTMLString(_ string: String, baseURL: URL?) -> WKNavigation? {
+        if runtimeActivityStopRequested { return nil }
+        return super.loadHTMLString(string, baseURL: baseURL)
+    }
+    public override func loadFileURL(_ URL: URL, allowingReadAccessTo readAccessURL: URL) -> WKNavigation? {
+        if runtimeActivityStopRequested { return nil }
+        return super.loadFileURL(URL, allowingReadAccessTo: readAccessURL)
+    }
+    public override func reload() -> WKNavigation? {
+        if runtimeActivityStopRequested { return nil }
+        return super.reload()
+    }
+    public override func goBack() -> WKNavigation? {
+        if runtimeActivityStopRequested { return nil }
+        return super.goBack()
+    }
+    public override func goForward() -> WKNavigation? {
+        if runtimeActivityStopRequested { return nil }
+        return super.goForward()
+    }
+    func loadStoppedBlankDocument() -> WKNavigation? {
+        return super.loadHTMLString("", baseURL: URL(string: "about:blank"))
+    }
+
+    private var activityIdentity: WeakRuntimeActivityTarget?
+    func runtimeActivityIdentity() -> WeakRuntimeActivityTarget {
+        if activityIdentity == nil { activityIdentity = WeakRuntimeActivityTarget(self) }
+        return activityIdentity!
+    }
+
+    private var runtimeActivityStopper: RuntimeActivityStopper?
+    private var runtimeDisposed = false
+    private var runtimeActivityStopRequested = false
+
+    // Terminal lifecycle evidence only: no URL, account or document content.
+    // Native identity and application state distinguish document stop from
+    // final disposal when Widget teardown is delayed in background.
+    func logRuntimeLifecycle(_ stage: String) {
+        let object = String(describing: Unmanaged.passUnretained(self).toOpaque())
+        let viewId = id.map { String(describing: $0) } ?? "none"
+        NSLog("[EHRuntimeLifecycle] stage=%@ native=%@ viewId=%@ state=%ld",
+              stage, object, viewId, UIApplication.shared.applicationState.rawValue)
+    }
+
+    public func stopRuntimeActivity(completion: @escaping (Error?) -> Void) {
+        if runtimeDisposed { completion(nil); return }
+        runtimeActivityStopRequested = true
+        if runtimeActivityStopper == nil { runtimeActivityStopper = RuntimeActivityStopper(webView: self) }
+        runtimeActivityStopper?.stop { [weak self] error in
+            if error == nil { self?.runtimeActivityIdentity().stopConfirmed = true }
+            completion(error)
+        }
+    }
+
     public func pauseTimers() {
         if !isPausedTimers {
             isPausedTimers = true
@@ -3538,6 +3599,10 @@ if(window.\(JavaScriptBridgeJS.get_JAVASCRIPT_BRIDGE_NAME())[\(_callHandlerID)] 
     }
     
     public func dispose() {
+        if runtimeDisposed { return }
+        if runtimeActivityStopRequested { logRuntimeLifecycle("native_dispose_begin") }
+        runtimeDisposed = true
+        runtimeActivityStopper?.disposed()
         channelDelegate?.dispose()
         channelDelegate = nil
         runWindowBeforeCreatedCallbacks()
@@ -3597,9 +3662,12 @@ if(window.\(JavaScriptBridgeJS.get_JAVASCRIPT_BRIDGE_NAME())[\(_callHandlerID)] 
         SharedLastTouchPointTimestamp.removeValue(forKey: self)
         callAsyncJavaScriptBelowIOS14Results.removeAll()
         plugin = nil
+        runtimeActivityIdentity().stopConfirmed = true
+        if runtimeActivityStopRequested { logRuntimeLifecycle("native_dispose_complete") }
     }
     
     deinit {
+        if runtimeActivityStopRequested { logRuntimeLifecycle("native_dealloc") }
         debugPrint("InAppWebView - dealloc")
     }
 }
