@@ -2321,8 +2321,100 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
   }
 
 
+  @Override public void loadUrl(String url) {
+    if (!runtimeActivityStopRequested) super.loadUrl(url);
+  }
+  @Override public void loadUrl(String url, Map<String, String> headers) {
+    if (!runtimeActivityStopRequested) super.loadUrl(url, headers);
+  }
+  @Override public void loadData(String data, String mimeType, String encoding) {
+    if (!runtimeActivityStopRequested) super.loadData(data, mimeType, encoding);
+  }
+  @Override public void loadDataWithBaseURL(String baseUrl, String data, String mimeType, String encoding, String historyUrl) {
+    if (!runtimeActivityStopRequested) super.loadDataWithBaseURL(baseUrl, data, mimeType, encoding, historyUrl);
+  }
+  @Override public void postUrl(String url, byte[] data) {
+    if (!runtimeActivityStopRequested) super.postUrl(url, data);
+  }
+  @Override public void reload() { if (!runtimeActivityStopRequested) super.reload(); }
+  @Override public void goBack() { if (!runtimeActivityStopRequested) super.goBack(); }
+  @Override public void goForward() { if (!runtimeActivityStopRequested) super.goForward(); }
+  @Override public void goBackOrForward(int steps) { if (!runtimeActivityStopRequested) super.goBackOrForward(steps); }
+
+  public static final class RuntimeActivityIdentity {
+    public final java.lang.ref.WeakReference<InAppWebView> view;
+    public boolean stopConfirmed;
+    RuntimeActivityIdentity(InAppWebView view) { this.view = new java.lang.ref.WeakReference<>(view); }
+  }
+  private RuntimeActivityIdentity runtimeActivityIdentity;
+  public RuntimeActivityIdentity runtimeActivityIdentity() {
+    if (runtimeActivityIdentity == null) runtimeActivityIdentity = new RuntimeActivityIdentity(this);
+    return runtimeActivityIdentity;
+  }
+
+  private RuntimeActivityStopper runtimeActivityStopper;
+  private boolean runtimeDisposed;
+  private boolean runtimeDisposePrepared;
+  private boolean runtimeActivityStopRequested;
+  private Handler runtimeStopTimeoutHandler;
+  private Runnable runtimeStopTimeout;
+
+  private void cancelRuntimeStopTimeout() {
+    if (runtimeStopTimeoutHandler != null && runtimeStopTimeout != null) {
+      runtimeStopTimeoutHandler.removeCallbacks(runtimeStopTimeout);
+    }
+    runtimeStopTimeoutHandler = null;
+    runtimeStopTimeout = null;
+  }
+
+  public void stopRuntimeActivity(io.flutter.plugin.common.MethodChannel.Result result) {
+    if (runtimeDisposed) { result.success(null); return; }
+    runtimeActivityStopRequested = true;
+    if (runtimeActivityStopper == null) {
+      runtimeActivityStopper = new RuntimeActivityStopper(completion -> {
+        // This native instance only. Global pauseTimers would also stop a successor.
+        cancelRuntimeStopTimeout();
+        stopLoading();
+        getSettings().setJavaScriptEnabled(false);
+        setWebChromeClient(new WebChromeClient());
+        final Handler timeoutHandler = new Handler(Looper.getMainLooper());
+        final Runnable timeout = () -> completion.complete("Blank document did not finish within 5 seconds");
+        setWebViewClient(new WebViewClient() {
+          @RequiresApi(api = Build.VERSION_CODES.O)
+          @Override public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+            // This document is already terminal. Handle the renderer exit for
+            // this retained instance and destroy it; the default false return
+            // would terminate the host even though its successor is healthy.
+            InAppWebView.this.dispose();
+            return true;
+          }
+          @Override public void onPageFinished(WebView view, String url) {
+            if (!"about:blank".equals(url)) return;
+            timeoutHandler.removeCallbacks(timeout);
+            completion.complete(null);
+          }
+          @Override public void onReceivedError(WebView view, int code, String description, String failingUrl) {
+            if (!"about:blank".equals(failingUrl)) return;
+            timeoutHandler.removeCallbacks(timeout);
+            completion.complete(description);
+          }
+        });
+        runtimeStopTimeoutHandler = timeoutHandler;
+        runtimeStopTimeout = timeout;
+        timeoutHandler.postDelayed(timeout, 5000);
+        InAppWebView.super.loadUrl("about:blank");
+      });
+    }
+    runtimeActivityStopper.stop(error -> {
+      if (error == null) { runtimeActivityIdentity().stopConfirmed = true; result.success(null); }
+      else result.error("runtime_stop_failed", error, null);
+    });
+  }
+
   @Override
   public void dispose() {
+    if (runtimeDisposed || (runtimeDisposePrepared && !runtimeActivityStopRequested)) return;
+    if (!runtimeDisposePrepared) {
     if (channelDelegate != null) {
       channelDelegate.dispose();
       channelDelegate = null;
@@ -2336,8 +2428,8 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
     }
     setWebChromeClient(new WebChromeClient());
     setWebViewClient(new WebViewClient() {
-      public void onPageFinished(WebView view, String url) {
-        destroy();
+      @Override public void onPageFinished(WebView view, String url) {
+        if (!runtimeActivityStopRequested) completeRuntimeDisposal();
       }
     });
     interceptOnlyAsyncAjaxRequestsPluginScript = null;
@@ -2386,7 +2478,29 @@ final public class InAppWebView extends InputAwareWebView implements InAppWebVie
       javaScriptBridgeInterface = null;
     }
     plugin = null;
-    loadUrl("about:blank");
+    runtimeDisposePrepared = true;
+    }
+    // Ordinary WebViews keep the target branch's blank-navigation destruction
+    // timing. Only an explicitly stopped terminal runtime needs a synchronous
+    // release receipt, including when its blank unload previously timed out.
+    if (!runtimeActivityStopRequested) {
+      loadUrl("about:blank");
+      return;
+    }
+    ViewParent nativeParent = getParent();
+    if (nativeParent instanceof ViewGroup) ((ViewGroup) nativeParent).removeView(this);
+    cancelRuntimeStopTimeout();
+    stopLoading();
+    completeRuntimeDisposal();
+  }
+
+  /** Complete one native destruction, preserving exact stop identity and waiter ownership. */
+  private void completeRuntimeDisposal() {
+    if (runtimeDisposed) return;
+    destroy();
+    runtimeDisposed = true;
+    runtimeActivityIdentity().stopConfirmed = true;
+    if (runtimeActivityStopper != null) runtimeActivityStopper.disposed();
   }
 
   @Override

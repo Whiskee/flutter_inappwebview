@@ -407,6 +407,13 @@ public class WebViewChannelDelegate extends ChannelDelegateImpl {
         }
         result.success(true);
         break;
+      case stopRuntimeActivity:
+        if (webView instanceof com.pichillilorenzo.flutter_inappwebview_android.webview.in_app_webview.InAppWebView) {
+          ((com.pichillilorenzo.flutter_inappwebview_android.webview.in_app_webview.InAppWebView) webView).stopRuntimeActivity(result);
+        } else {
+          result.error("runtime_unavailable", "Native runtime is unavailable", null);
+        }
+        break;
       case pauseTimers:
         if (webView != null) {
           webView.pauseTimers();

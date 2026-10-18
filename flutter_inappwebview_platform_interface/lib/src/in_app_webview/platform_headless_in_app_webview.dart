@@ -399,6 +399,11 @@ abstract class PlatformHeadlessInAppWebView extends PlatformInterface
     );
   }
 
+  /// Stops the exact original native document, including after native handoff.
+  /// False means the id was not registered; it is not release confirmation.
+  Future<bool> stopRuntimeActivity() =>
+      throw UnimplementedError('stopRuntimeActivity is not implemented');
+
   ///{@template flutter_inappwebview_platform_interface.PlatformHeadlessInAppWebView.dispose}
   ///Disposes the headless WebView.
   ///{@endtemplate}

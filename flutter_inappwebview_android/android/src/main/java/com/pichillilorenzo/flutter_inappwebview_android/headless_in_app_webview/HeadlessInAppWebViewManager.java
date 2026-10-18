@@ -30,6 +30,8 @@ import com.pichillilorenzo.flutter_inappwebview_android.InAppWebViewFlutterPlugi
 import com.pichillilorenzo.flutter_inappwebview_android.types.ChannelDelegateImpl;
 import com.pichillilorenzo.flutter_inappwebview_android.webview.in_app_webview.FlutterWebView;
 
+import com.pichillilorenzo.flutter_inappwebview_android.webview.in_app_webview.InAppWebView;
+
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -42,6 +44,7 @@ public class HeadlessInAppWebViewManager extends ChannelDelegateImpl {
   protected static final String LOG_TAG = "HeadlessInAppWebViewManager";
   public static final String METHOD_CHANNEL_NAME = "com.pichillilorenzo/flutter_headless_inappwebview";
   
+  private final Map<String, InAppWebView.RuntimeActivityIdentity> runtimeTargets = new java.util.LinkedHashMap<>();
   public final Map<String, HeadlessInAppWebView> webViews = new HashMap<>();
   @Nullable
   public InAppWebViewFlutterPlugin plugin;
@@ -56,6 +59,18 @@ public class HeadlessInAppWebViewManager extends ChannelDelegateImpl {
     final String id = (String) call.argument("id");
 
     switch (call.method) {
+      case "stopRuntimeActivity": {
+        InAppWebView.RuntimeActivityIdentity reference = runtimeTargets.get(id);
+        if (reference == null) { result.success(false); break; }
+        InAppWebView target = reference.view.get();
+        if (target == null) { result.success(reference.stopConfirmed); break; }
+        target.stopRuntimeActivity(new Result() {
+          public void success(Object value) { result.success(true); }
+          public void error(String code, String message, Object details) { result.error(code, message, details); }
+          public void notImplemented() { result.notImplemented(); }
+        });
+        break;
+      }
       case "run":
         {
           HashMap<String, Object> params = (HashMap<String, Object>) call.argument("params");
@@ -75,6 +90,15 @@ public class HeadlessInAppWebViewManager extends ChannelDelegateImpl {
       context = plugin.applicationContext;
     }
     FlutterWebView flutterWebView = new FlutterWebView(plugin, context, id, params);
+    // Bound deallocated identity tombstones; live targets remain discoverable
+    // through a pending native handoff without being retained by this registry.
+    if (runtimeTargets.size() >= 256) {
+      java.util.Iterator<java.util.Map.Entry<String, InAppWebView.RuntimeActivityIdentity>> entries = runtimeTargets.entrySet().iterator();
+      while (entries.hasNext() && runtimeTargets.size() >= 256) {
+        if (entries.next().getValue().view.get() == null) entries.remove();
+      }
+    }
+    if (flutterWebView.webView != null) runtimeTargets.put(id, flutterWebView.webView.runtimeActivityIdentity());
     HeadlessInAppWebView headlessInAppWebView = new HeadlessInAppWebView(plugin, id, flutterWebView);
     webViews.put(id, headlessInAppWebView);
     
@@ -93,6 +117,7 @@ public class HeadlessInAppWebViewManager extends ChannelDelegateImpl {
       }
     }
     webViews.clear();
+    runtimeTargets.clear();
     plugin = null;
   }
 }
